@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nex — Settings</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/static/style.css">
+<style>body{overflow:auto}</style>
+</head>
+<body>
+<div class="settings">
+  <h1>⚙ Nex Settings <a href="/">← back to Nex</a></h1>
+
+  <div class="card">
+    <h2>🧠 AI (Ollama) <span id="ollama-pill" class="pill">checking…</span></h2>
+    <div class="row"><label>Ollama host</label><input type="text" id="ollama_host"></div>
+    <div class="row"><label>Model</label><input type="text" id="model" list="models"><datalist id="models"></datalist>
+      <small>Default gpt-oss:20b. Run <code>ollama pull gpt-oss:20b</code> once.</small></div>
+    <div class="row"><label>Context window</label><input type="number" id="num_ctx" min="4096" step="1024"><small>16384 is a good balance for a 20b model. Nex compacts its memory automatically to stay inside this.</small></div>
+    <div class="row"><label>Temperature</label><input type="number" id="temperature" min="0" max="1.5" step="0.05"></div>
+    <div class="row"><label>Proactive ideas</label><label class="switch"><input type="checkbox" id="proactive"> Nex may speak up on its own with ideas / bugs</label></div>
+    <div class="row"><label>Theme</label><select id="theme"><option>cyan</option><option>purple</option><option>green</option><option>orange</option><option>pink</option><option>white</option></select></div>
+  </div>
+
+  <div class="card">
+    <h2>🎙 Voice</h2>
+    <div class="row"><label>Voice enabled</label><label class="switch"><input type="checkbox" id="voice_enabled"> Talk & listen</label></div>
+    <div class="row"><label>Wake word</label><input type="text" id="wake_word"><small>Say this word, then your request. e.g. “Nex, pause the music”.</small></div>
+    <div class="row"><label>Language</label><input type="text" id="language" placeholder="en-US"><small>BCP-47 tag. de-DE works for German (browser engine).</small></div>
+    <div class="row"><label>Speech-to-text</label><select id="stt_engine"><option value="auto">auto</option><option value="browser">browser (Chrome/Edge, zero install)</option><option value="whisper">local Whisper (faster-whisper, push-to-talk)</option></select>
+      <small id="stt-info"></small></div>
+    <div class="row"><label>Whisper model</label><select id="whisper_model"><option>tiny</option><option>base</option><option>small</option><option>medium</option></select></div>
+    <div class="row"><label>Text-to-speech</label><select id="tts_engine"><option value="auto">auto</option><option value="browser">browser voices (Edge has natural voices)</option><option value="piper">local Piper</option></select>
+      <small id="tts-info"></small></div>
+    <div class="row"><label>Piper voice (.onnx)</label><input type="text" id="piper_voice" placeholder="leave empty to use first .onnx in nex/data/"></div>
+  </div>
+
+  <div class="card">
+    <h2>🔌 MCP connections <button class="ghost" id="mcp-refresh" style="margin-left:auto">↻ reconnect all</button></h2>
+    <div id="servers"></div>
+    <button class="ghost" id="add-server">+ add custom server</button>
+    <h2 style="margin-top:18px">Logs</h2>
+    <div class="log" id="mcp-log"></div>
+  </div>
+
+  <div class="card">
+    <h2>🎵 Amazon Music</h2>
+    <p style="color:var(--dim);font-size:13px;margin:0 0 8px">Controlled through Windows media keys and the system media session — no API, no login. Nex is allowed to open Amazon Music (and nothing else).</p>
+    <div class="row"><label>Poll now-playing</label><label class="switch"><input type="checkbox" id="music_poll"> Show track & vibe animation while music plays</label></div>
+    <div class="row"><label>Now</label><span id="music-now" style="color:var(--dim)">—</span></div>
+  </div>
+
+  <div class="card">
+    <h2>🧾 Memory</h2>
+    <ul class="notes" id="notes"></ul>
+    <div style="margin-top:10px;display:flex;gap:8px"><button class="ghost" id="clear-conv">Clear conversation</button></div>
+  </div>
+
+  <div class="card">
+    <h2>🛡 Safety (fixed, cannot be changed)</h2>
+    <ul class="safety" style="color:var(--dim);font-size:13px;margin:0;padding-left:18px">
+      <li>Nex has <b>no</b> file, shell, network or process capability. Those code paths don't exist.</li>
+      <li>The only app Nex may launch is Amazon Music.</li>
+      <li>MCP tools matching shell / file / process / download patterns are blocked even if a server offers them.</li>
+      <li>Code payloads containing HttpService, os/io, plugin, Studio internals or playtest triggers are rejected.</li>
+      <li>Any playtest tool needs your explicit one-time OK in the main window.</li>
+      <li>Nex's own memory lives only in <code>nex/data/</code>.</li>
+    </ul>
+  </div>
+
+  <div style="position:sticky;bottom:0;padding:14px 0;background:linear-gradient(transparent,var(--bg) 40%);display:flex;gap:10px;align-items:center">
+    <button class="primary" id="save">Save</button><span id="saved" style="color:var(--ok);opacity:0;transition:.3s">Saved ✓</span>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const FIELDS = ['ollama_host','model','num_ctx','temperature','proactive','theme','voice_enabled','wake_word','language','stt_engine','whisper_model','tts_engine','piper_voice','music_poll'];
+let S = {};
+async function load() {
+  S = await (await fetch('/api/settings')).json();
+  for (const f of FIELDS) { const el = $('#' + f); if (!el) continue; if (el.type === 'checkbox') el.checked = !!S[f]; else el.value = S[f] ?? ''; }
+  renderServers();
+  checkOllama(); loadMcp(); loadMusic(); loadMemory();
+}
+async function checkOllama() {
+  const p = $('#ollama-pill'); p.textContent = 'checking…'; p.className = 'pill';
+  try { const r = await (await fetch('/api/ollama')).json();
+    if (r.ok) { p.textContent = r.has_model ? 'connected · model ready' : 'connected · model missing'; p.className = 'pill ' + (r.has_model ? 'ok' : 'bad'); $('#models').innerHTML = r.models.map(m => `<option>${m}</option>`).join(''); }
+    else { p.textContent = 'offline: ' + r.error; p.className = 'pill bad'; }
+  } catch (e) { p.textContent = 'offline'; p.className = 'pill bad'; }
+}
+function renderServers() {
+  const box = $('#servers'); box.innerHTML = '';
+  for (const [name, cfg] of Object.entries(S.mcp || {})) {
+    const preset = (S.presets || {})[name] || {};
+    const d = document.createElement('div'); d.className = 'server'; d.dataset.name = name;
+    d.innerHTML = `
+      <div class="head"><b>${preset.label || name}</b><span class="pill" data-status>…</span>
+        <label class="switch"><input type="checkbox" data-k="enabled" ${cfg.enabled ? 'checked' : ''}> enabled</label>
+        <button class="ghost" data-act="test">test</button><button class="ghost" data-act="reconnect">reconnect</button><button class="ghost" data-act="remove">✕</button></div>
+      <div class="row"><label>transport</label><select data-k="transport"><option ${cfg.transport==='stdio'?'selected':''}>stdio</option><option ${cfg.transport==='http'?'selected':''}>http</option></select></div>
+      <div class="row"><label>command</label><input type="text" data-k="command" value="${(cfg.command||'').replace(/"/g,'&quot;')}"></div>
+      <div class="row"><label>args (JSON array)</label><input type="text" data-k="args" value='${JSON.stringify(cfg.args||[])}'></div>
+      <div class="row"><label>url (http)</label><input type="text" data-k="url" value="${cfg.url||''}"></div>
+      ${preset.notes ? `<div class="row"><label></label><small>${preset.notes}</small></div>` : ''}
+      <div class="row"><label>tools</label><span data-tools style="color:var(--dim);font-size:12px">—</span></div>`;
+    d.querySelector('[data-act=remove]').onclick = () => { delete S.mcp[name]; renderServers(); };
+    d.querySelector('[data-act=reconnect]').onclick = async () => { await save(); await fetch(`/api/mcp/${name}/reconnect`, { method: 'POST' }); loadMcp(); };
+    d.querySelector('[data-act=test]').onclick = async () => { const r = await (await fetch(`/api/mcp/${name}/test`, { method: 'POST' })).json(); alert(JSON.stringify(r, null, 1)); };
+    box.appendChild(d);
+  }
+}
+function collectServers() {
+  const out = {};
+  document.querySelectorAll('.server').forEach(d => {
+    const name = d.dataset.name; const c = {};
+    d.querySelectorAll('[data-k]').forEach(el => { const k = el.dataset.k; if (el.type === 'checkbox') c[k] = el.checked; else if (k === 'args') { try { c[k] = JSON.parse(el.value || '[]'); } catch { c[k] = []; } } else c[k] = el.value; });
+    if (!c.command) delete c.command; if (!c.url) delete c.url;
+    out[name] = c;
+  });
+  return out;
+}
+$('#add-server').onclick = () => { const n = prompt('Server name (letters/dashes):'); if (!n) return; S.mcp[n.replace(/[^a-z0-9\-]/gi,'-')] = { transport: 'stdio', command: '', args: [], enabled: false }; renderServers(); };
+async function loadMcp() {
+  const r = await (await fetch('/api/mcp')).json();
+  for (const s of r.servers) { const d = document.querySelector(`.server[data-name="${s.name}"]`); if (!d) continue; const p = d.querySelector('[data-status]'); p.textContent = s.connected ? 'connected' : (s.error ? 'error: ' + s.error.slice(0, 60) : 'off'); p.className = 'pill ' + (s.connected ? 'ok' : (s.error ? 'bad' : '')); d.querySelector('[data-tools]').textContent = s.tools.join(', ') || '—'; }
+  $('#mcp-log').textContent = r.logs.join('\n');
+}
+$('#mcp-refresh').onclick = async () => { await save(); loadMcp(); };
+async function loadMusic() { try { const m = await (await fetch('/api/music')).json(); $('#music-now').textContent = m.title ? `${m.playing ? '▶' : '⏸'} ${m.title} — ${m.artist || ''}` : 'nothing playing'; } catch {} }
+async function loadMemory() {
+  // memory arrives over ws; simplest: open a ws just for hello
+  const ws = new WebSocket((location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/ws');
+  ws.onmessage = e => { const { event, data } = JSON.parse(e.data); if (event === 'hello' || event === 'memory') { const m = event === 'hello' ? data.memory : data; const ul = $('#notes'); ul.innerHTML = ''; (m.notes || []).forEach((n, i) => { const li = document.createElement('li'); li.innerHTML = `<span>${n}</span><button class="ghost" data-i="${i}">✕</button>`; li.querySelector('button').onclick = () => ws.send(JSON.stringify({ type: 'note_remove', idx: i })); ul.appendChild(li); }); if (!(m.notes || []).length) ul.innerHTML = '<li style="color:var(--dim)">no long-term notes yet</li>'; } };
+  $('#clear-conv').onclick = () => { if (confirm('Clear the conversation window and summary?')) ws.send(JSON.stringify({ type: 'clear' })); };
+}
+async function save() {
+  const body = {};
+  for (const f of FIELDS) { const el = $('#' + f); if (!el) continue; body[f] = el.type === 'checkbox' ? el.checked : (el.type === 'number' ? Number(el.value) : el.value); }
+  body.mcp = collectServers();
+  await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  Object.assign(S, body);
+  $('#saved').style.opacity = 1; setTimeout(() => $('#saved').style.opacity = 0, 1500);
+  checkOllama(); setTimeout(loadMcp, 1500);
+}
+$('#save').onclick = save;
+$('#stt-info').textContent = 'Browser STT is instant and hands-free (wake word). Whisper needs: pip install faster-whisper';
+$('#tts-info').textContent = 'Browser TTS is zero-install (Edge = best voices). Piper needs: pip install piper-tts and a voice .onnx in nex/data/';
+load();
+</script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+# Core (only one real dependency):
+aiohttp>=3.9
+
+# Optional: fully local voice (otherwise Nex uses your browser's built-in speech engine, zero deps)
+# faster-whisper>=1.0
+# piper-tts>=1.2
+# sounddevice>=0.4
+# numpy

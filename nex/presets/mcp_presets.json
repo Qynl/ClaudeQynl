@@ -1,0 +1,25 @@
+{
+  "roblox-studio": {
+    "label": "Roblox Studio (official MCP)",
+    "transport": "stdio",
+    "command": "%LOCALAPPDATA%\\Roblox\\rbx-studio-mcp.exe",
+    "args": ["--stdio"],
+    "enabled": true,
+    "notes": "Install from https://github.com/Roblox/studio-rust-mcp-server (Releases). Run the installer once; it adds the Studio plugin. Then Studio must be open with a place loaded. Tools: run_code, insert_model."
+  },
+  "unreal-engine": {
+    "label": "Unreal Engine 5 (UnrealMCP plugin)",
+    "transport": "stdio",
+    "command": "python",
+    "args": ["<path-to>/unreal-mcp/Python/unreal_mcp_server.py"],
+    "enabled": false,
+    "notes": "Install https://github.com/chongdashu/unreal-mcp (or any Unreal MCP server). Enable the plugin in your UE 5.x project, start the editor, then enable this."
+  },
+  "custom-http": {
+    "label": "Custom MCP (Streamable HTTP)",
+    "transport": "http",
+    "url": "http://127.0.0.1:8000/mcp",
+    "enabled": false,
+    "notes": "Any MCP server exposing Streamable HTTP."
+  }
+}

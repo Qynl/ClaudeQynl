@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nex</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<canvas id="eyes"></canvas>
+
+<div id="status">
+  <span id="status-dot"></span>
+  <span id="status-text">Waking up…</span>
+</div>
+
+<div id="thought"></div>
+
+<div id="music-bar" class="hidden">
+  <span id="music-title"></span>
+  <div class="music-controls">
+    <button data-m="previous" title="Previous">⏮</button>
+    <button data-m="toggle" title="Play/Pause">⏯</button>
+    <button data-m="next" title="Next">⏭</button>
+  </div>
+</div>
+
+<div id="chat">
+  <div id="log"></div>
+  <div id="consent" class="hidden">
+    <span>Nex wants to run a playtest.</span>
+    <button id="consent-yes">Allow once</button><button id="consent-no">No</button>
+  </div>
+  <form id="input-row">
+    <button type="button" id="mic" title="Hold to talk / click to toggle listening">🎙</button>
+    <input id="input" autocomplete="off" placeholder='Talk to Nex… or say "Nex" out loud'>
+    <button type="submit" id="send">➤</button>
+  </form>
+</div>
+
+<div id="plan" class="hidden">
+  <div class="plan-head">
+    <b id="plan-title">Plan</b>
+    <span id="plan-pct"></span>
+    <span class="plan-btns">
+      <button data-p="pause" title="Pause">⏸</button>
+      <button data-p="resume" title="Continue">▶</button>
+      <button data-p="stop" title="Stop">⏹</button>
+      <button id="plan-close" title="Hide">✕</button>
+    </span>
+  </div>
+  <div class="plan-bar"><div id="plan-fill"></div></div>
+  <div id="plan-body"></div>
+</div>
+
+<nav id="topbar">
+  <button id="btn-plan" title="Build plan">📋</button>
+  <button id="btn-anims" title="Try animations">✨</button>
+  <a href="/settings" title="Settings">⚙</a>
+</nav>
+
+<div id="anim-picker" class="hidden"></div>
+<div id="toast"></div>
+
+<script src="/static/animations.js"></script>
+<script src="/static/eyes.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

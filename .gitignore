@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+nex/data/
+.venv/
+venv/
+*.log
