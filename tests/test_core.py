@@ -1,3 +1,4 @@
+import os
 import asyncio, sys, json, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from nex.core.mcp import MCPManager
@@ -51,6 +52,10 @@ async def test_agent_loop():
                 if "QA LEAD" in sys_p: return {"content":json.dumps({"playtest_script":["walk"]}),"tool_calls":[]}
                 if "PRODUCER" in sys_p: return {"content":json.dumps({"phases":[{"name":"P1","tasks":[{"title":"make baseplate","detail":"d","acceptance":"a"},{"title":"make script","detail":"d","acceptance":"a"}]}]}),"tool_calls":[]}
                 if "PLAN JUDGE" in sys_p: return {"content":json.dumps({"verdict":"approve"}),"tool_calls":[]}
+                if "VERTICAL SLICE:" in sys_p: return {"content":json.dumps({"phases":[{"name":"Vertical slice","goal":"g","tasks":[{"title":"slice area","kind":"asset","detail":"d","acceptance":"a","depends_on":[],"est_calls":1}]}]}),"tool_calls":[]}
+                if "CREATIVE DIRECTOR" in sys_p: return {"content":json.dumps({"greenlight":True,"score":8,"what_works":[],"must_change_before_scaling":[],"extra_tasks":[]}),"tool_calls":[]}
+                if "LENS" in sys_p: return {"content":json.dumps({"score":8,"problems":[],"must_fix":[],"verdict":"pass"}),"tool_calls":[]}
+                if "RELEASE MANAGER" in sys_p: return {"content":"release ok","tool_calls":[]}
                 if "plan reviewer" in sys_p: return {"content":json.dumps({"score":7}),"tool_calls":[]}
                 if "OPTIMIST" in sys_p: return {"content":json.dumps({"score":8,"verdict":"pass"}),"tool_calls":[]}
                 if "PESSIMIST" in sys_p: return {"content":json.dumps({"score":6,"verdict":"pass","problems":[],"must_fix":[]}),"tool_calls":[]}
@@ -80,8 +85,11 @@ async def test_agent_loop():
     # switch to build and go
     await nx.set_mode("build"); nx._start_loop()
     await asyncio.wait_for(nx._build_task, 20)
-    assert len(nx.ledger)==2, nx.ledger
-    pr=nx.plan.progress(); assert pr["done"]==2, pr
+    if os.environ.get("NEX_TRACE"): print("STATUS",nx.plan.plan["status"],"LOG",nx.plan.plan["log"][-5:],"MSG",[e for e in events if e[0]=="message"][-3:], "PHASES",[(p["name"],[t.get("status") for t in p["tasks"]]) for p in nx.plan.plan["phases"]])
+    assert len(nx.ledger)>=9, nx.ledger
+    pr=nx.plan.progress(); assert pr["done"]==pr["total"] and pr['total']>=9, pr
+    assert nx.plan.plan['phases'][0]['gate']=='slice' and nx.plan.plan['phases'][-1]['name'].startswith('Polish')
+    assert nx.plan.plan.get('slice_review',{}).get('greenlight') is True
     assert nx.plan.plan["status"]=="done"
     # fast-agreement path skips the judge -> the ledger carries the facts instead
     assert any("built it" in x for x in nx.ledger), nx.ledger

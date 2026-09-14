@@ -9,7 +9,7 @@ through MCP — running fully local on `gpt-oss:20b` via Ollama.
 │                                                              │
 │            ▄▄▄▄▄▄▄▄▄▄          ▄▄▄▄▄▄▄▄▄▄                    │
 │            █████████           █████████                     │
-│            █████████           █████████         ← 137 anims │
+│            █████████           █████████         ← 43 anims │
 │            █████████           █████████                     │
 │            ▀▀▀▀▀▀▀▀▀▀          ▀▀▀▀▀▀▀▀▀▀                    │
 │                                                              │
@@ -78,7 +78,7 @@ Nothing is built. The result is a GDD you can read in 📋 → *Design*.
 * In **Build** mode without a plan: small tasks are done directly ("add a red spinning platform at 0,10,0").
 * **"pause"**, **"continue"**, **"stop"**, **"status"** control the build.
 * **"remember that I hate neon colours"** → long-term note.
-* ✨ button → try any of the 137 animations.
+* ✨ button → try any of the 43 animations.
 
 ## Speed & anti-hallucination (tuned for a 16 GB GPU, e.g. RX 9060 XT)
 
@@ -106,6 +106,7 @@ A 35-task game ≈ 30-40 min of unattended building.
 ```
 nex/
   server.py          aiohttp server: UI, websocket, settings, MCP mgmt, voice endpoints
+  core/production.py  vertical slice, review lenses, phase gates, polish phase, release note
   core/safety.py     hard capability limits (tool blocklist, payload scan, playtest consent)
   core/mcp.py        MCP client (stdio + Streamable HTTP), no SDK
   core/agent.py      Nex brain: intent router, planner, builder, optimist/pessimist/judge, resume, proactive
@@ -116,7 +117,7 @@ nex/
   core/schemas.py    JSON schemas for structured outputs
   core/planning.py   5-subagent pre-production pipeline
   core/voice.py      optional local Whisper/Piper
-  web/               eyes (canvas), 137 animations, app logic, settings page
+  web/               anims.js (43 clips), eyes.js (spring pose engine), app.js, settings page
   presets/           MCP presets (Roblox official, Unreal, custom HTTP)
   data/              Nex's memory (git-ignored)
 tests/test_core.py   safety + MCP + full agent-loop tests (mock LLM)
@@ -124,199 +125,70 @@ tests/test_core.py   safety + MCP + full agent-loop tests (mock LLM)
 
 Run tests: `python tests/test_core.py`
 
-## Animation catalog (137 clips)
+## Animation catalog (43 clips)
 
-Generated from `nex/web/animations.js` (`node tests/gen_anim_docs.js`). Loops run until the state changes; one-shots layer on top. Loops with **enter / exit** clips play them when moving between families — e.g. leaving any music loop plays `headset_off` before idle.
+From `nex/web/anims.js`. Every clip is a *pose target*; `eyes.js` springs the eyes toward it, so any clip can interrupt any other without a jump. Loops with **enter / exit** shots play them when switching family — e.g. leaving music plays `headset_off` (the headset fades and lifts) before `idle`. All props are white line art.
 
-### Idle loops
+### loops
 
-| Clip | Enter → Exit | What it looks like |
-|---|---|---|
-| `heartbeat` |  | Lub-dub double pump of scale and glow. |
-| `idle` |  | Neutral breathing. Slow float, micro-drift, soft glow pulse. |
-| `idle_bored` |  | Heavy-lidded, eyes drift lazily side to side. |
-| `idle_breathe` |  | Very slow scale breathing, nothing else. |
-| `idle_curious` |  | Head tilt with one eye slightly taller — “hm?” |
-| `idle_look_around` |  | Glances left, holds, then right, then back to centre. |
-| `idle_wiggle` |  | Playful counter-rotating wiggle with little hops. |
-| `whistle` |  | Innocent whistling, eyes up and away. |
+| Clip | Type | Enter → Exit | Description |
+|---|---|---|---|
+| `idle` | loop |  →  | Neutral. Slow float, faint drift. |
+| `listen` | loop |  →  | Attentive: eyes open a little, slight lean, sound wave. |
+| `speak` | loop |  →  | Talking: syllable flicker, gentle nod. |
+| `think` | loop |  →  | Looks up-right, relaxed lids, three dots. |
+| `plan` | loop |  →  | Reads down a list: eyes scan left-right, slightly lowered. |
+| `work` | loop | work_in → work_out | Focused: small quick eye movements, spinner. |
+| `type` | loop | work_in → work_out | Writing code line by line. |
+| `read` | loop | work_in → work_out | Reads lines across. |
+| `review` | loop |  →  | Weighs it up: slow left-right, slight tilt. |
+| `error` | loop |  →  | Eyes shut, brief shake, cross above. |
+| `music` | loop | headset_on → headset_off | Vibing: sways and bounces on the beat. |
+| `music_nod` | loop | headset_on → headset_off | Head-nodding, eyes half closed. |
+| `music_sway` | loop | headset_on → headset_off | Slow wide sway, dreamy. |
+| `music_closed` | loop | headset_on → headset_off | Eyes closed, lost in it. |
+| `music_paused` | loop | headset_on → headset_off | Paused, still wearing the headset. |
+| `music_dj` | loop | headset_on → headset_off | DJ: tilted, one lid down, scratch wobble, equalizer. |
+| `sleep` | loop | sleep_in → wake | Asleep. Slow breathing. |
 
-### Sleep loops
+### shots
 
-| Clip | Enter → Exit | What it looks like |
-|---|---|---|
-| `doze` | fall_asleep → wake_stretch | Nodding off: head drops, jerks back, drops again. |
-| `sleep` | fall_asleep → wake_stretch | Asleep. Slow rise and fall, floating z’s. |
+| Clip | Type | Enter → Exit | Description |
+|---|---|---|---|
+| `headset_on` | 1.1s |  →  | Headset lowers on from above, small settle bounce, happy blink. |
+| `headset_off` | 1.15s |  →  | Lifts the headset off, shakes it out, settles. |
+| `work_in` | 0.8s |  →  | Rolls shoulders, drops gaze to the desk. |
+| `work_out` | 0.8s |  →  | Lifts gaze, satisfied blink. |
+| `wake` | 2.2s |  →  | Opens, tall stretch, blink. |
+| `sleep_in` | 1.6s |  →  | Lids sink, glow dims. |
+| `blink` | 0.18s |  →  | Blink. |
+| `blink2` | 0.4s |  →  | Double blink. |
+| `wink` | 0.5s |  →  | Wink. |
+| `nod` | 0.9s |  →  | Yes. |
+| `shake` | 0.9s |  →  | No. |
+| `glance_l` | 1.3s |  →  | Glance left. |
+| `glance_r` | 1.3s |  →  | Glance right. |
+| `glance_u` | 1.3s |  →  | Glance up. |
+| `tilt` | 1.6s |  →  | Head tilt — curious. |
+| `squint` | 1.6s |  →  | Narrows eyes. |
+| `happy` | 1.8s |  →  | Happy hop. |
+| `sad` | 2.4s |  →  | Sad. |
+| `surprised` | 1.4s |  →  | Round wide eyes, pop up. |
+| `idea` | 2.2s |  →  | Lightbulb. |
+| `success` | 1.6s |  →  | Check mark. |
+| `fail` | 1.8s |  →  | Cross mark. |
+| `celebrate` | 3s |  →  | Bouncing celebration. |
+| `sigh` | 2s |  →  | Inhale up, exhale down. |
+| `yawn` | 2.2s |  →  | Yawn. |
+| `alert` | 1.2s |  →  | Attention. |
 
-### Voice loops
+## Production workflow (build mode)
 
-| Clip | Enter → Exit | What it looks like |
-|---|---|---|
-| `listen` |  | Eyes widen, lean in, sound waves pulse either side. |
-| `listen_lean` |  | Stronger lean toward the user, one eye taller. |
-| `speak` |  | Syllable-rate height flicker with gentle nodding. |
-| `speak_calm` |  | Soft-spoken: relaxed lids, minimal motion. |
-| `speak_excited` |  | Happy shape, bigger bounce, brighter glow. |
+1. **Pre-production** – design doc, architecture, art style, naming contract; the pessimist scores the plan.
+2. **Vertical slice** – one tiny, fully finished loop first. A creative director reviews it against a Studio snapshot; only a greenlight (max 2 rounds) lets Nex scale out.
+3. **Phases** – assets → scripts → UI → data. Every task passes review lenses (tech / feel / art / UX by task kind) and a judge that can send it back with exact fix instructions.
+4. **Phase gates** – a read-only Luau probe checks the architecture contract (missing scripts/remotes, default-grey parts) and adds fix tasks.
+5. **Polish phase** – lighting, UI consistency, juice, sounds, balance/anti-exploit, screenshot critique, onboarding.
+6. **Release note** – what was built, what is weak, and a request to press Play.
 
-### Thinking loops
-
-| Clip | Enter → Exit | What it looks like |
-|---|---|---|
-| `idea_think` |  | Up-left daydream — the idle idea scout. |
-| `think` |  | Eyes up-right, lids relaxed, three thinking dots. |
-| `think_hard` |  | Squinted, eyes rocking, a gear turns. |
-
-### Planning loops
-
-| Clip | Enter → Exit | What it looks like |
-|---|---|---|
-| `compile` |  | Progress bar fills, squint deepens, tiny shake at 100%. |
-| `plan` | plan_start → plan_end | Reads down a checklist, boxes tick over time. |
-| `plan_subagents` | plan_start → plan_end | Design/Tech/Art/QA agent orbs light up in turn while the clipboard fills. |
-
-### Working loops
-
-| Clip | Enter → Exit | What it looks like |
-|---|---|---|
-| `fix` | work_start → work_end | Wrench cranks, small determined jolts. |
-| `read` | work_start → work_end | Reads lines across an open book. |
-| `scan` |  | Inspect mode: a laser line sweeps, eyes follow it. |
-| `search` |  | Magnifier roams, one eye enlarged behind it. |
-| `typing` | work_start → work_end | Rapid code typing: line-by-line scan, caret tick, keys light up. |
-| `work` | work_start → work_end | Focused build loop with a turning gear. |
-| `write` | work_start → work_end | Eyes track a pencil writing line after line. |
-
-### Review-committee loops
-
-| Clip | Enter → Exit | What it looks like |
-|---|---|---|
-| `judge` |  | Judge: level gaze, balance scale tips back and forth. |
-| `review_neg` |  | Pessimist: cold hue, narrowed eyes, thumbs down. |
-| `review_pos` |  | Optimist: warm hue, happy eyes, thumbs up. |
-
-### Music loops (headset on/off transitions)
-
-| Clip | Enter → Exit | What it looks like |
-|---|---|---|
-| `music_bounce` | headset_on → headset_off | Squash-and-stretch hop every beat. |
-| `music_dj` | headset_on → headset_off | DJ: hand on the cup, head tilted, scratch wobble, equalizer. |
-| `music_eyes_closed` | headset_on → headset_off | Eyes closed, lost in it. |
-| `music_headbang` | headset_on → headset_off | Hard nods, eyes squeezed. |
-| `music_love` | headset_on → headset_off | Heart eyes — this song is a favourite. |
-| `music_paused` | headset_on → headset_off | Paused but still wearing the headset, waiting. |
-| `music_shuffle` | headset_on → headset_off | Side-step shuffle, eyes roll with the steps. |
-| `music_sway` | headset_on → headset_off | Slow wide sway, dreamy lids. |
-| `music_vibe` | headset_on → headset_off | Default vibe: sways side to side, bounces on the beat. |
-
-### State loops
-
-| Clip | Enter → Exit | What it looks like |
-|---|---|---|
-| `confused` |  | Uneven eyes, tilt, floating question mark. |
-| `error` |  | X eyes, red tint, brief shake, exclamation. |
-| `gamepad` |  | Watching a playtest: gamepad, darting eyes. |
-| `loading` |  | Watching a clock tick. |
-| `locked` |  | Shield up, guarded look. |
-| `offline` |  | Dim, half-closed, unplugged. |
-| `waiting_consent` |  | Big hopeful eyes, waiting for a yes/no. |
-
-### One-shot reactions
-
-| Clip | Enter → Exit | What it looks like |
-|---|---|---|
-| `alert` |  | Attention flash. |
-| `angry` |  | Angry slant, trembling. |
-| `annoyed` |  | Half-lidded, looking away. |
-| `approve` |  | Verdict pass: nodding bounce. |
-| `blink` |  | Standard blink. |
-| `bounce_in` |  | Drops in from above and bounces. |
-| `bow` |  | Polite bow. |
-| `bug_fixed` |  | Bug squashed, check mark. |
-| `bug_found` |  | Spots a bug — startled. |
-| `celebrate` |  | Confetti party, rainbow hue. |
-| `compact_memory` |  | Compacting memory — brain + gear. |
-| `connected` |  | Engine connected. |
-| `countdown` |  | Three-second pulse countdown. |
-| `cry` |  | Tears streaming. |
-| `disapprove` |  | Verdict redo: head shake. |
-| `disconnected` |  | Engine lost. |
-| `dizzy` |  | Eyes spiral, stars orbit. |
-| `double_blink` |  | Two quick blinks. |
-| `electric` |  | Zapped. |
-| `eureka` |  | Star eyes, bulb and sparks. |
-| `facepalm` |  | Hand over eye, slow shake. |
-| `fail` |  | Red cross, eyes sink. |
-| `fall_asleep` |  | Lids slowly sink, eyes drift down, glow dims. |
-| `forget` |  | Deletes a memory. |
-| `giggle` |  | Suppressed giggle. |
-| `glitch` |  | Digital glitch. |
-| `greet` |  | Hello wave. |
-| `happy` |  | Happy hops. |
-| `headset_off` |  | Takes the headset off — lifts up and away, shakes hair out, settles. |
-| `headset_on` |  | Headset drops down from above, lands with a small bounce, happy blink. |
-| `hide` |  | Ducks out of view. |
-| `hmm` |  | Short pensive “hmm” with tilt. |
-| `idea` |  | Lightbulb pops on. |
-| `jump` |  | Jump. |
-| `laugh` |  | Laughing shake. |
-| `look_down` |  | Glance down, lids follow. |
-| `look_left` |  | Glance left and back. |
-| `look_right` |  | Glance right and back. |
-| `look_up` |  | Glance up and back. |
-| `love` |  | Heart eyes with floating hearts. |
-| `mode_build` |  | Switched to Build mode: wrench spin, focused eyes. |
-| `mode_plan` |  | Switched to Plan mode: clipboard peeks up. |
-| `music_drop` |  | Beat drop: slam down, rainbow flash, sparks. |
-| `music_next` |  | Skip: quick swing to the right. |
-| `music_prev` |  | Previous: quick swing to the left. |
-| `music_volume_down` |  | Volume down: eyes narrow, speaker icon sinks. |
-| `music_volume_up` |  | Volume up: eyes widen, speaker icon rises. |
-| `nod` |  | Yes nod. |
-| `ok_sign` |  | Quick OK check. |
-| `peek` |  | Peeks up from below. |
-| `plan_end` |  | Clipboard drops away, eyes come back up. |
-| `plan_start` |  | Clipboard slides up from below. |
-| `playtest_ask` |  | Asks permission to playtest. |
-| `pop` |  | Pop in from nothing. |
-| `proud` |  | Chest-out proud, sparkles. |
-| `rain_cloud` |  | Sulks under a raining cloud. |
-| `remember` |  | Stores a memory — brain glows. |
-| `roll_eyes` |  | Eye-roll arc, lids settle half-way. |
-| `sad` |  | Droopy sad eyes. |
-| `scared` |  | Tall scared eyes, shivering. |
-| `shake_head` |  | No shake. |
-| `shield_block` |  | Safety layer blocked something. |
-| `shiver` |  | Cold shiver. |
-| `shocked` |  | Tiny dot pupils, trembling. |
-| `shy` |  | Looks down and away, pinkish. |
-| `side_eye` |  | Suspicious side-eye with one lid half-down. |
-| `sigh` |  | Inhale up, exhale down. |
-| `slow_blink` |  | Slow contented blink. |
-| `smug` |  | Smug half-lids. |
-| `sneeze` |  | Ah… ah… choo. |
-| `spin` |  | Quick 360. |
-| `squint_focus` |  | Narrowed, focused stare. |
-| `stretch` |  | Tall stretch with eyes shut. |
-| `success` |  | Green check draws in. |
-| `surprised` |  | Round wide eyes, pop up. |
-| `thumbs_up` |  | Thumbs up. |
-| `tilt_left` |  | Head tilt left. |
-| `tilt_right` |  | Head tilt right. |
-| `tool_call` |  | Flash of glow as a tool is invoked. |
-| `tool_result` |  | Small upward glance as the result lands. |
-| `victory_spin` |  | 360° spin with squash & stretch, proud landing. |
-| `wake` |  | Quick wake: lids open, eyes grow to full size. |
-| `wake_stretch` |  | Morning routine: lids open, tall stretch, shake-off, blink. |
-| `wake_word` |  | Heard “Nex”: snap to attention, pop bigger. |
-| `wink` |  | Right-eye wink. |
-| `wink_left` |  | Left-eye wink. |
-| `work_end` |  | Tools go down, eyes lift, satisfied blink. |
-| `work_start` |  | Roll shoulders, drop the gaze to the desk. |
-| `yawn` |  | Long yawn stretch. |
-| `zoom_in` |  | Leans in — eyes grow and narrow. |
-
-**State → default loop:** idle→`idle`, thinking→`think`, working→`work`, reviewing→`judge`, speaking→`speak`, listening→`listen`, music→`music_vibe`, error→`error`, sleep→`sleep`, offline→`offline`, planning→`plan_subagents`
-
-**Idle fidget pool:** `blink` `double_blink` `look_left` `look_right` `look_up` `tilt_left` `tilt_right` `slow_blink` `hmm` `stretch` `idle_look_around` `roll_eyes` `yawn` `wink` `peek` `whistle` `side_eye` `heartbeat` `idle_curious` `idle_wiggle`
-
-**Music variants (rotate every 14 s):** `music_vibe` `music_headbang` `music_sway` `music_bounce` `music_eyes_closed` `music_shuffle` `music_love` `music_dj`
+Three consecutive failed tasks pause the build and ask you for help.

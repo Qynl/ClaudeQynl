@@ -20,6 +20,7 @@ from .music import AmazonMusic
 from .planning import PrePro
 from . import schemas as SCH
 from . import luau as LU
+from . import production as PROD
 
 Emit = Callable[[str, dict], Awaitable[None]]
 
@@ -38,7 +39,7 @@ class Nex:
         self.mem = Memory()
         self.plan = PlanStore()
         self.state = "idle"          # idle | thinking | working | reviewing | speaking | listening | music | error
-        self.status_text = "Ready"
+        self.status_text = ""
         self.busy = asyncio.Lock()
         self._build_task: asyncio.Task | None = None
         self._pause = asyncio.Event(); self._pause.set()
@@ -165,11 +166,11 @@ class Nex:
         if quick:
             intent = quick
         else:
-            await self.set_state("thinking", "Thinking…", anim="think")
+            await self.set_state("thinking", "thinking", anim="think")
         try:
             intent = intent if quick else await self.llm.json(P.INTENT, text, temperature=0.0, schema=SCH.INTENT, num_predict=160, effort='fast', cache=True)
         except Exception as e:
-            await self.set_state("error", "Ollama unreachable", anim="error")
+            await self.set_state("error", "ollama unreachable", anim="error")
             await self.say(f"I can't reach Ollama right now. {e}", speak=False)
             return
 
@@ -202,11 +203,11 @@ class Nex:
                 await self._chat(text)
         except Exception as e:
             traceback.print_exc()
-            await self.set_state("error", "Something broke", anim="error")
+            await self.set_state("error", "error", anim="error")
             await self.say(f"Hm, something went wrong: {str(e)[:200]}")
         finally:
             if self.state not in ("working", "reviewing"):
-                await self.set_state("idle", "Ready", anim="idle")
+                await self.set_state("idle", "", anim="idle")
             await self._compact_if_needed()
 
     def _quick_intent(self, text: str) -> dict | None:
@@ -227,7 +228,7 @@ class Nex:
 
     async def _chat(self, text: str):
         msgs = [{"role": "system", "content": self._system()}] + self.mem.recent_messages()
-        await self.set_state("thinking", "Thinking…", anim="think")
+        await self.set_state("thinking", "thinking", anim="think")
         buf = ""
         await self.emit("stream_start", {})
         async for tok in self.llm.stream(msgs):
@@ -254,7 +255,7 @@ class Nex:
     # ------------------------------------------------------------ music
     async def _do_music(self, intent: dict, text: str):
         action = intent.get("music_action") or "toggle"
-        await self.set_state("music", "Amazon Music", anim="music_start")
+        await self.set_state("music", "music", anim="music")
         if action == "what":
             np = await self.music.now_playing()
             if np.get("title"):
@@ -287,21 +288,21 @@ class Nex:
 
     # ------------------------------------------------------------ small task / inspect
     async def _small_task(self, text: str):
-        await self.set_state("working", "Working in Studio…", anim="work")
+        await self.set_state("working", "working", anim="work")
         report, outputs = await self._run_builder({"title": text, "detail": text, "acceptance": "The change exists in the scene, is verified by a read-only check, and has no errors."})
         if not report.upper().startswith("FAILED"):
             j = await self._review({"title": text, "kind": "small"}, report, outputs, light=True)
             if j.get("verdict") != "pass":
-                await self.set_state("working", "Fixing after review…", anim="fix")
+                await self.set_state("working", "fixing", anim="work")
                 report, outputs = await self._run_builder({"title": text, "detail": text, "acceptance": "verified"}, j.get("fix_instructions", ""))
         if report.upper().startswith("FAILED"):
-            await self.set_state("error", "Didn't work", anim="fail")
+            await self.set_state("error", "failed", anim="fail")
         else:
-            await self.set_state("idle", "Done", anim="success")
+            await self.set_state("idle", "", anim="success")
         await self.say(report.replace("DONE:", "Done.").replace("FAILED:", "That didn't work:"))
 
     async def _inspect(self, text: str):
-        await self.set_state("working", "Reading the place…", anim="scan")
+        await self.set_state("working", "reading", anim="read")
         report, outputs = await self._run_builder({"title": f"INSPECT (read-only, do not modify anything): {text}", "detail": "Only run read-only code that prints facts. Do not create or change anything.", "acceptance": "A clear spoken summary of what was found."}, read_only=True)
         await self.say(report.replace("DONE:", "").strip())
 
@@ -378,7 +379,7 @@ print(table.concat(out, "\\n"))'''
                     ok, msg_txt = LU.summarize(issues)
                     if not ok:
                         preflight_fails = preflight_fails + 1
-                        await self.set_state("working", "Pre-flight caught a bug", anim="side_eye")
+                        await self.set_state("working", "fixing", anim="squint")
                         await self.emit("tool_result", {"name": name, "text": "PRE-FLIGHT REJECTED:\n" + msg_txt, "blocked": False, "error": True})
                         msgs.append({"role": "tool", "content": "NEX_PREFLIGHT_REJECTED — fix these and call again (do not explain, just re-call):\n" + msg_txt, "name": name})
                         if preflight_fails >= 5:
@@ -406,7 +407,7 @@ print(table.concat(out, "\\n"))'''
                 had_err = ("NEX_ERROR" in txt) or bool(result.get("isError")) or bool(re.search(r"(^|\n)\S*:\d+: |attempt to |unexpected symbol|expected .* near", txt))
                 errors_in_row = errors_in_row + 1 if had_err else 0
                 if had_err:
-                    await self.set_state("working", "Hit an error, fixing…", anim="facepalm" if errors_in_row >= 2 else "fix")
+                    await self.set_state("working", "fixing", anim="sad" if errors_in_row >= 2 else "fix")
                 await self.emit("tool_result", {"name": name, "text": txt[:2000], "blocked": result.get("blocked", False), "error": bool(had_err)})
                 msgs.append({"role": "tool", "content": txt[:6000], "name": name})
                 if errors_in_row >= 4:
@@ -427,27 +428,26 @@ print(table.concat(out, "\\n"))'''
         if "NEX_VERIFY" not in joined and task.get("kind") not in ("review",) and not light:
             return {"verdict": "redo", "reason": "no read-only verification call was made",
                     "fix_instructions": "Run one read-only verification call (it will be tagged NEX_VERIFY) that prints the objects you created, then report DONE.", "note_for_memory": ""}
-        ctx = f"TASK: {task['title']}\nDETAIL: {task.get('detail','')[:900]}\nACCEPTANCE: {task.get('acceptance','')}\n\nBUILDER REPORT: {report[:800]}\n\nTOOL OUTPUTS (tail):\n" + joined[-3500:]
+        style = json.dumps((self.plan.plan.get("meta") or {}).get("style") or {})[:700]
+        ctx = f"TASK: {task['title']}\nKIND: {task.get('kind')}\nDETAIL: {task.get('detail','')[:900]}\nACCEPTANCE: {task.get('acceptance','')}\nSTYLE: {style}\n\nBUILDER REPORT: {report[:800]}\n\nTOOL OUTPUTS (tail):\n" + joined[-3200:]
         if light:
-            # one merged critic instead of three calls for small/one-shot tasks
-            await self.set_state("reviewing", "Quick review", anim="judge")
-            j = await self.llm.json(P.JUDGE + "\nYou are reviewing alone (no other critics). Be strict about evidence.", ctx, 0.1, schema=SCH.JUDGE, num_predict=300, effort="fast")
-            await self.emit("review", {"task": task["title"], "optimist": None, "pessimist": None, "judge": j})
+            await self.set_state("reviewing", "reviewing", anim="review")
+            j = await self.llm.json(P.JUDGE + "\nYou are reviewing alone. Be strict about evidence.", ctx, 0.1, schema=SCH.JUDGE, num_predict=300, effort="fast")
+            await self.emit("review", {"task": task["title"], "judge": j})
             return j
-        await self.set_state("reviewing", "Reviewing (optimist + pessimist)", anim="review_pos")
-        opt_c = self.llm.json(P.OPTIMIST, ctx, 0.3, schema=SCH.OPTIMIST, num_predict=350, effort="fast")
-        pes_c = self.llm.json(P.PESSIMIST, ctx, 0.3, schema=SCH.PESSIMIST, num_predict=450, effort="fast")
-        opt, pes = await asyncio.gather(opt_c, pes_c, return_exceptions=True)
-        opt = opt if isinstance(opt, dict) else {"score": 5, "strengths": [], "evidence": [], "verdict": "pass"}
-        pes = pes if isinstance(pes, dict) else {"score": 5, "problems": [], "must_fix": [], "unverified_claims": [], "verdict": "pass"}
-        await self.set_state("reviewing", "Reviewing (pessimist)", anim="review_neg")
-        # fast agreement: both pass and pessimist has no must_fix -> skip judge call
-        if opt.get("verdict") == "pass" and pes.get("verdict") == "pass" and not pes.get("must_fix"):
-            judge = {"verdict": "pass", "reason": "both reviewers agree", "fix_instructions": "", "note_for_memory": ""}
+        lenses = PROD.LENSES_BY_KIND.get(task.get("kind") or "script", ["tech", "feel"])
+        await self.set_state("reviewing", "review · " + " · ".join(lenses), anim="review")
+        results = await asyncio.gather(*[self.llm.json(PROD.LENS_PROMPT[l], ctx, 0.2, schema=SCH.PESSIMIST_LITE, num_predict=380, effort="fast") for l in lenses], return_exceptions=True)
+        lens_out = {l: (r if isinstance(r, dict) else {"score": 5, "problems": [], "must_fix": [], "verdict": "pass"}) for l, r in zip(lenses, results)}
+        must = [f"[{l}] {m}" for l, r in lens_out.items() for m in (r.get("must_fix") or [])]
+        if not must and all(r.get("verdict") == "pass" for r in lens_out.values()):
+            judge = {"verdict": "pass", "reason": "all lenses pass", "fix_instructions": "", "note_for_memory": ""}
         else:
-            await self.set_state("reviewing", "Judging…", anim="judge")
-            judge = await self.llm.json(P.JUDGE, f"{ctx[-2500:]}\n\nOPTIMIST: {json.dumps(opt)[:800]}\n\nPESSIMIST: {json.dumps(pes)[:1200]}", 0.1, schema=SCH.JUDGE, num_predict=350, effort="fast")
-        await self.emit("review", {"task": task["title"], "optimist": opt, "pessimist": pes, "judge": judge})
+            await self.set_state("reviewing", "judging", anim="review")
+            judge = await self.llm.json(PROD.LENS_JUDGE, f"{ctx[-2000:]}\n\nLENSES: {json.dumps(lens_out)[:2200]}", 0.1, schema=SCH.JUDGE, num_predict=380, effort="fast")
+            if judge.get("verdict") == "redo" and must and not judge.get("fix_instructions"):
+                judge["fix_instructions"] = "\n".join(must)
+        await self.emit("review", {"task": task["title"], "lenses": {l: r.get("score") for l, r in lens_out.items()}, "judge": judge})
         if judge.get("note_for_memory"):
             self.mem.add_note(judge["note_for_memory"])
         return judge
@@ -457,23 +457,40 @@ print(table.concat(out, "\\n"))'''
         if self._build_task and not self._build_task.done():
             await self.say("I'm already building something. Say stop first if you want a new project.")
             return
-        await self.set_state("planning", "Pre-production…", anim="plan_subagents")
+        await self.set_state("planning", "pre-production", anim="plan")
         await self.say("Starting pre-production: designer, architect, art director, QA, then the producer.", kind="proactive")
 
         async def stage(key, label):
-            await self.set_state("planning", label, anim="plan_subagents")
+            await self.set_state("planning", label, anim="plan")
             await self.emit("plan_stage", {"stage": key, "label": label})
 
         engines = [x["name"] for x in self.mcp.status() if x["connected"]]
         try:
             result = await PrePro(self.llm, stage).run(brief, self.mem.context_block()[:1500], engines)
         except Exception as e:
-            await self.set_state("error", "Planning failed", anim="error")
+            await self.set_state("error", "planning failed", anim="error")
             await self.say(f"Pre-production failed: {str(e)[:120]}")
             return
         if not result["phases"]:
             await self.say("I couldn't produce a plan, could you describe the game a bit more?")
             return
+        try:
+            await stage("slice", "producer: vertical slice")
+            docs = f"ARCH: {json.dumps(result['gdd'].get('architecture'))[:3000]}\nART: {json.dumps(result['gdd'].get('art'))[:2000]}\nDESIGN: {json.dumps(result['gdd'].get('design'))[:2000]}"
+            sl = await self.llm.json(PROD.SLICE_PLANNER, docs, 0.25, schema=SCH.PLAN, num_predict=2500, effort="deep")
+            if sl.get("phases") and sl["phases"][0].get("tasks"):
+                for t in sl["phases"][0]["tasks"]:
+                    t["status"] = "todo"; t["slice"] = True
+                sl["phases"][0]["gate"] = "slice"
+                result["phases"] = sl["phases"][:1] + result["phases"]
+        except Exception:
+            pass
+        pol = json.loads(json.dumps(PROD.POLISH_PHASE))
+        for t in pol["tasks"]:
+            t["status"] = "todo"
+        result["phases"].append(pol)
+        for ph in result["phases"]:
+            ph.setdefault("gate", "phase")
         self.plan.new(brief, result["phases"])
         self.plan.plan["meta"] = result["meta"]; self.plan.plan["gdd"] = result["gdd"]
         self.plan.plan["status"] = "planned"; self.plan.plan["mode"] = self.mode; self.plan.plan["ledger"] = self.ledger = []
@@ -483,7 +500,7 @@ print(table.concat(out, "\\n"))'''
         await self.emit("plan", self.plan.plan)
         pr = self.plan.progress()
         rv = result["gdd"].get("plan_review", {}).get("pessimist", {})
-        await self.set_state("idle", "Plan ready", anim="success")
+        await self.set_state("idle", "", anim="success")
         await self.say(f"Plan ready: {result['meta'].get('title','the game')}. {len(result['phases'])} phases, {pr['total']} tasks. "
                        f"The pessimist scored it {rv.get('score','?')} out of 10." + (" Starting the build." if then_build else " Switch to build mode and say go when you like it."), kind="proactive")
         if then_build:
@@ -503,10 +520,10 @@ print(table.concat(out, "\\n"))'''
         on = [x["name"] for x in st if x["connected"]]
         off = [x for x in st if not x["connected"] and x.get("error")]
         if on:
-            await self.set_state("idle", "Connected", anim="connected")
+            await self.set_state("idle", "", anim="success")
             await self.say(f"Connected to {', '.join(on)}. Say Nex and tell me what to build.", kind="proactive")
         elif off:
-            await self.set_state("idle", "No engine connected", anim="disconnected")
+            await self.set_state("idle", "no engine connected", anim="fail")
             await self.say("I'm awake, but no engine is connected yet. Open Roblox Studio with a place, or check the MCP settings.", kind="proactive", speak=False)
         await self.resume_if_needed()
 
@@ -523,11 +540,64 @@ print(table.concat(out, "\\n"))'''
             await self.emit("plan", self.plan.plan)
             await self.say(f"I was in the middle of building {self.plan.plan.get('meta',{}).get('title') or 'the game'} — next up is '{nt[1]['title']}'. Say continue when you want me to pick it back up.", kind="proactive")
 
+    async def _phase_gate(self, phase: dict):
+        arch = (self.plan.plan.get("gdd") or {}).get("architecture") or {}
+        srv = next((x for x in self.mcp.servers.values() if x.connected and any(t["name"] == "run_code" for t in x.tools)), None)
+        if not srv or not arch:
+            return
+        await self.set_state("reviewing", "phase gate", anim="read")
+        try:
+            r = await srv.call_tool("run_code", {"command": PROD.phase_gate_probe(arch)})
+        except Exception:
+            return
+        g = PROD.parse_gate(r.get("text", ""))
+        self.plan.log(f"gate {phase['name']}: missing={len(g['missing'])} parts={g['parts']} grey={g['grey']}")
+        done_txt = " ".join((t["title"] + " " + t.get("detail", "")).lower() for ph in self.plan.plan["phases"] for t in ph.get("tasks", []) if t.get("status") == "done")
+        new = []
+        for m in g["missing"][:6]:
+            name = m.split(" ", 1)[-1]
+            if name.lower() in done_txt:
+                new.append({"id": f"gate{abs(hash(m)) % 10000}", "kind": "script" if m.startswith(("Script", "Module", "Remote")) else "asset", "title": f"Create missing {m}",
+                            "detail": f"The architecture promises '{m}' and an earlier task claimed to build it, but the gate could not find it. Create it properly and verify.",
+                            "acceptance": f"Read-only check finds {name}.", "status": "todo"})
+        if g["grey"] > 8 and phase.get("gate") != "slice":
+            new.append({"id": f"grey{len(self.plan.plan['log'])}", "kind": "polish", "title": f"Replace {g['grey']} default-grey parts with styled materials",
+                        "detail": "Walk workspace, find BaseParts with default Plastic + grey colour, assign STYLE palette colours and materials by role.", "acceptance": "Gate reports DEFAULT_GREY 0.", "status": "todo"})
+        if new:
+            phase.setdefault("tasks", []).extend(new); self.plan.save(); await self.emit("plan", self.plan.plan)
+            await self.say(f"Phase gate found {len(new)} gaps in {phase['name']} — adding fix tasks.", kind="proactive")
+
+    async def _slice_greenlight(self, phase: dict) -> bool:
+        snap = await self._scene_snapshot()
+        await self.set_state("reviewing", "creative director", anim="review")
+        rv = await self.llm.json(PROD.SLICE_REVIEW, f"DESIGN: {json.dumps((self.plan.plan.get('gdd') or {}).get('design'))[:2500]}\nLEDGER:\n" + "\n".join(self.ledger[-12:]) + f"\nSNAPSHOT:\n{snap[:2500]}", 0.3, schema=SCH.SLICE_REVIEW, num_predict=900, effort="deep")
+        extra = rv.get("extra_tasks") or []
+        for i, t in enumerate(extra[:6]):
+            t.update({"id": f"slicefix{i}{phase.get('slice_rounds', 0)}", "status": "todo"}); phase["tasks"].append(t)
+        self.plan.plan["slice_review"] = rv; self.plan.save(); await self.emit("plan", self.plan.plan)
+        if rv.get("greenlight") and not extra:
+            await self.say(f"Vertical slice greenlit, {rv.get('score','?')} out of 10. Scaling out to the full game.", kind="proactive")
+            return True
+        await self.say(f"The slice isn't there yet ({rv.get('score','?')}/10): {'; '.join((rv.get('must_change_before_scaling') or [])[:2])[:160]}. Fixing before scaling.", kind="proactive")
+        return False
+
     async def _build_loop(self):
         self.plan.plan["status"] = "running"; self.plan.save()
+        skipped_in_row = 0
         try:
             while not self._stop:
                 await self._pause.wait()
+                for ph in self.plan.plan.get("phases", []):
+                    tasks = ph.get("tasks", [])
+                    if tasks and all(t.get("status") in ("done", "skipped") for t in tasks) and not ph.get("gated"):
+                        ph["gated"] = True; self.plan.save()
+                        await self._phase_gate(ph)
+                        if ph.get("gate") == "slice":
+                            ok = await self._slice_greenlight(ph)
+                            if not ok:
+                                ph["slice_rounds"] = ph.get("slice_rounds", 0) + 1
+                                ph["gated"] = ph["slice_rounds"] >= 2
+                                self.plan.save()
                 nxt = self.plan.next_task()
                 if not nxt:
                     break
@@ -536,13 +606,13 @@ print(table.concat(out, "\\n"))'''
                 self.plan.set_task(task["id"], status="in_progress")
                 self.plan.plan["current"] = task["id"]; self.plan.save()
                 await self.emit("plan", self.plan.plan)
-                fix = task.get("fix", "")
-                report, outputs = await self._run_builder(task, fix)
+                report, outputs = await self._run_builder(task, task.get("fix", ""))
                 if self._stop:
                     break
                 self.plan.log(f"{task['id']} builder: {report[:200]}")
-                judge = await self._review(task, report, outputs, light=task.get("kind") in ("asset", "polish", "animation") and attempts == 0)
+                judge = await self._review(task, report, outputs, light=(task.get("kind") in ("asset", "animation") and attempts == 0 and not task.get("slice")))
                 if judge.get("verdict") == "pass" and not report.upper().startswith("FAILED"):
+                    skipped_in_row = 0
                     self.plan.set_task(task["id"], status="done", fix="")
                     self._ledger_add(f"{task['title']}: {report.replace('DONE:', '').strip()[:120]}")
                     pr = self.plan.progress()
@@ -552,36 +622,38 @@ print(table.concat(out, "\\n"))'''
                     attempts += 1
                     if attempts >= MAX_TASK_ATTEMPTS:
                         self.plan.set_task(task["id"], status="skipped", attempts=attempts)
-                        await self.set_state("working", "Skipping task", anim="rain_cloud")
+                        skipped_in_row += 1
+                        await self.set_state("working", "skipping", anim="sad")
                         await self.say(f"I couldn't get '{task['title']}' right after {attempts} tries, moving on. Reason: {judge.get('reason','')[:120]}", kind="proactive")
+                        if skipped_in_row >= 3:
+                            self._pause.clear(); self.plan.plan["status"] = "paused"; self.plan.save()
+                            await self.set_state("idle", "paused — need you", anim="tilt")
+                            await self.say("Three tasks in a row failed. Something is off — maybe Studio lost the connection or the plan needs a change. Tell me what to do, or say continue.", kind="proactive")
                     else:
                         self.plan.set_task(task["id"], status="failed", attempts=attempts, fix=judge.get("fix_instructions", ""))
-                        await self.set_state("working", "Fixing after review…", anim="fix")
-                        await self.emit("message", {"role": "assistant", "text": f"Reviewers rejected '{task['title']}' — fixing: {judge.get('reason','')[:140]}", "speak": False, "kind": "proactive"})
+                        await self.set_state("working", "fixing", anim="work")
+                        await self.emit("message", {"role": "assistant", "text": f"Review rejected '{task['title']}' — fixing: {judge.get('reason','')[:140]}", "speak": False, "kind": "proactive"})
                 await self.emit("plan", self.plan.plan)
                 await self._compact_if_needed()
             if not self._stop and not self.plan.next_task():
                 self.plan.plan["status"] = "done"; self.plan.save()
                 await self.emit("plan", self.plan.plan)
-                await self.set_state("idle", "Game finished!", anim="victory_spin")
-                await asyncio.sleep(2.2)
-                await self.set_state("idle", "Game finished!", anim="celebrate")
+                await self.set_state("idle", "finished", anim="celebrate")
                 try:
-                    qa = await self.llm.chat([{"role": "system", "content": P.FINAL_QA}, {"role": "user", "content": f"PLAN: {json.dumps(self.plan.plan)[:9000]}\nNOTES: {self.mem.state['notes'][-30:]}"}], temperature=0.3)
+                    qa = await self.llm.chat([{"role": "system", "content": PROD.RELEASE_REPORT}, {"role": "user", "content": f"GDD: {json.dumps((self.plan.plan.get('gdd') or {}).get('design'))[:2000]}\nSTATUS: {json.dumps(self.plan.progress())}\nLEDGER: {json.dumps(self.ledger[-40:])[:4000]}\nLOG: {json.dumps(self.plan.plan.get('log', [])[-6:])}"}], temperature=0.3, num_predict=400, effort="fast")
                     await self.say(qa["content"], kind="proactive")
                 except Exception:
                     pass
                 await self.say("Press Play in Studio and tell me how it feels — I'll fix whatever you find.", kind="proactive")
-                await asyncio.sleep(4)
         except Exception as e:
             traceback.print_exc()
             self.plan.plan["status"] = "paused"; self.plan.save()
-            await self.set_state("error", "Build error", anim="error")
+            await self.set_state("error", "build error", anim="error")
             await self.say(f"Build paused due to an error: {str(e)[:150]}. Say continue to retry.", kind="proactive")
         finally:
             if self.plan.plan.get("status") == "running":
                 self.plan.plan["status"] = "paused"; self.plan.save()
-            await self.set_state("idle", "Ready", anim="idle")
+            await self.set_state("idle", "", anim="idle")
 
     async def _plan_control(self, cmd: str):
         if cmd == "pause":
@@ -621,13 +693,13 @@ print(table.concat(out, "\\n"))'''
                 if not self.mem.state.get("project"):
                     continue
                 self._last_activity = time.time()
-                await self.set_state("thinking", "Hmm…", anim="idea_think")
+                await self.set_state("thinking", "thinking", anim="think")
                 idea = await self.llm.json(P.IDEA_SCOUT, f"PROJECT: {json.dumps(self.mem.state['project'])}\nPLAN LOG: {json.dumps(self.plan.plan.get('log', [])[-8:])}\nNOTES: {self.mem.state['notes'][-10:]}", 0.7, schema=SCH.IDEA, num_predict=300, effort="fast")
                 if idea.get("has_idea") and idea.get("message"):
-                    await self.set_state("idle", "Idea!", anim="idea")
+                    await self.set_state("idle", "", anim="idea")
                     await self.say(idea["message"], kind="proactive")
                     if idea.get("task"):
                         self.mem.state["ideas"].append(idea["task"]); self.mem.save()
-                await self.set_state("idle", "Ready", anim="idle")
+                await self.set_state("idle", "", anim="idle")
             except Exception:
                 pass

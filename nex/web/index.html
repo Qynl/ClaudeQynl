@@ -8,37 +8,33 @@
 </head>
 <body>
 <canvas id="eyes"></canvas>
+<div id="status"></div>
 
-<!-- the only thing under the eyes: a quiet status line -->
-<div id="status"><span id="status-text"></span></div>
-<div id="thought"></div>
-
-<!-- thin bottom bar -->
 <footer id="bar">
-  <button id="bar-mode" title="Plan / Build"><i></i><span>plan</span></button>
-  <span id="bar-mid"></span>
-  <button id="bar-mic" title="Voice"><b></b></button>
-  <button id="bar-chat" title="Talk (Tab)">···</button>
-  <a href="/settings" id="bar-settings" title="Settings">⚙</a>
+  <button id="b-mode" title="Plan / Build"><i></i><span>plan</span></button>
+  <span id="b-mid"></span>
+  <button id="b-mic" title="Voice"><b></b></button>
+  <button id="b-chat" title="Talk · Tab">Talk</button>
+  <a href="/settings" title="Settings">Settings</a>
 </footer>
 
-<!-- slide-up sheet: chat + plan. hidden unless opened -->
 <section id="sheet" class="closed">
-  <nav class="sheet-tabs"><button data-tab="chat" class="on">Chat</button><button data-tab="plan">Plan</button><button data-tab="design">Design</button><button data-tab="built">Built</button><button data-tab="anims">Anims</button><span class="flex"></span><span id="plan-pct"></span><button id="sheet-close">✕</button></nav>
-  <div class="sheet-body">
-    <div id="tab-chat" class="tab on">
-      <div id="log"></div>
-      <div id="consent" class="hidden"><span>Nex wants to run a playtest.</span><button id="consent-yes">Allow once</button><button id="consent-no">No</button></div>
-      <form id="input-row"><input id="input" autocomplete="off" placeholder="Message Nex"><button type="submit">↵</button></form>
-    </div>
-    <div id="tab-plan" class="tab"><div class="plan-ctl"><button data-p="resume">▶ go / continue</button><button data-p="pause">⏸ pause</button><button data-p="stop">⏹ stop</button></div><div id="plan-body"></div></div>
-    <div id="tab-design" class="tab"><div id="gdd-body"></div></div>
-    <div id="tab-built" class="tab"><ul id="ledger" class="ledger"></ul></div>
-    <div id="tab-anims" class="tab"><div id="anim-picker"></div></div>
+  <nav>
+    <button data-tab="chat" class="on">Chat</button><button data-tab="plan">Plan</button><button data-tab="design">Design</button><button data-tab="built">Built</button><button data-tab="anims">Anims</button>
+    <span class="grow"></span><span id="pct"></span><button id="close">Close</button>
+  </nav>
+  <div id="t-chat" class="tab on">
+    <div id="log"></div>
+    <div id="consent" class="hidden"><span>Nex wants to run a playtest.</span><button id="c-yes">Allow once</button><button id="c-no">No</button></div>
+    <form id="row"><input id="input" autocomplete="off" placeholder="Message Nex"><button type="submit">Send</button></form>
   </div>
+  <div id="t-plan" class="tab"><div class="ctl"><button data-p="resume">Go / continue</button><button data-p="pause">Pause</button><button data-p="stop">Stop</button></div><div id="plan"></div></div>
+  <div id="t-design" class="tab"><div id="gdd"></div></div>
+  <div id="t-built" class="tab"><ul id="ledger"></ul></div>
+  <div id="t-anims" class="tab"><div id="anims"></div></div>
 </section>
 
-<script src="/static/animations.js"></script>
+<script src="/static/anims.js"></script>
 <script src="/static/eyes.js"></script>
 <script src="/static/app.js"></script>
 </body>

@@ -9,10 +9,10 @@
 </head>
 <body>
 <div class="settings">
-  <h1>⚙ Nex Settings <a href="/">← back to Nex</a></h1>
+  <h1>Settings <a href="/">← Nex</a></h1>
 
   <div class="card">
-    <h2>🧠 AI (Ollama) <span id="ollama-pill" class="pill">checking…</span></h2>
+    <h2>AI · Ollama <span id="ollama-pill" class="pill">checking…</span></h2>
     <div class="row"><label>Ollama host</label><input type="text" id="ollama_host"></div>
     <div class="row"><label>Model</label><input type="text" id="model" list="models"><datalist id="models"></datalist>
       <small>Default gpt-oss:20b. Run <code>ollama pull gpt-oss:20b</code> once.</small></div>
@@ -20,12 +20,12 @@
     <div class="row"><label>Temperature</label><input type="number" id="temperature" min="0" max="1.5" step="0.05"><small>0.3 default. Lower = fewer hallucinations; planners use their own values.</small></div>
     <div class="row"><label>Reasoning effort</label><select id="think"><option value="low">low (fast, default)</option><option value="medium">medium</option><option value="high">high (slow)</option></select><small>gpt-oss thinking budget for chat. Planning/builder first step always use medium.</small></div>
     <div class="row"><label>GPU preset</label><button class="ghost" id="preset-16gb">Apply "16 GB GPU" preset</button><small>num_ctx 8192 · temp 0.3 · low effort · model pinned in VRAM. For RX 9060 XT / RTX 4060 Ti 16 GB etc.</small></div>
-    <div class="row"><label>Live stats</label><span id="llm-stats" style="color:var(--dim);font-size:12px">—</span></div>
+    <div class="row"><label>Live stats</label><span id="llm-stats" style="color:var(--d3);font-size:12px">—</span></div>
     <div class="row"><label>Proactive ideas</label><label class="switch"><input type="checkbox" id="proactive"> Nex may speak up on its own with ideas / bugs</label></div>
   </div>
 
   <div class="card">
-    <h2>🎙 Voice</h2>
+    <h2>Voice</h2>
     <div class="row"><label>Voice enabled</label><label class="switch"><input type="checkbox" id="voice_enabled"> Talk & listen</label></div>
     <div class="row"><label>Wake word</label><input type="text" id="wake_word"><small>Say this word, then your request. e.g. “Nex, pause the music”.</small></div>
     <div class="row"><label>Language</label><input type="text" id="language" placeholder="en-US"><small>BCP-47 tag. de-DE works for German (browser engine).</small></div>
@@ -38,7 +38,7 @@
   </div>
 
   <div class="card">
-    <h2>🔌 MCP connections <button class="ghost" id="mcp-refresh" style="margin-left:auto">↻ reconnect all</button></h2>
+    <h2>MCP connections <button class="ghost" id="mcp-refresh" style="margin-left:auto">Reconnect all</button></h2>
     <div id="servers"></div>
     <button class="ghost" id="add-server">+ add custom server</button>
     <h2 style="margin-top:18px">Logs</h2>
@@ -46,21 +46,21 @@
   </div>
 
   <div class="card">
-    <h2>🎵 Amazon Music</h2>
-    <p style="color:var(--dim);font-size:13px;margin:0 0 8px">Controlled through Windows media keys and the system media session — no API, no login. Nex is allowed to open Amazon Music (and nothing else).</p>
+    <h2>Amazon Music</h2>
+    <p style="color:var(--d3);font-size:13px;margin:0 0 8px">Controlled through Windows media keys and the system media session — no API, no login. Nex is allowed to open Amazon Music (and nothing else).</p>
     <div class="row"><label>Poll now-playing</label><label class="switch"><input type="checkbox" id="music_poll"> Show track & vibe animation while music plays</label></div>
-    <div class="row"><label>Now</label><span id="music-now" style="color:var(--dim)">—</span></div>
+    <div class="row"><label>Now</label><span id="music-now" style="color:var(--d3)">—</span></div>
   </div>
 
   <div class="card">
-    <h2>🧾 Memory</h2>
+    <h2>Memory</h2>
     <ul class="notes" id="notes"></ul>
     <div style="margin-top:10px;display:flex;gap:8px"><button class="ghost" id="clear-conv">Clear conversation</button></div>
   </div>
 
   <div class="card">
-    <h2>🛡 Safety (fixed, cannot be changed)</h2>
-    <ul class="safety" style="color:var(--dim);font-size:13px;margin:0;padding-left:18px">
+    <h2>Safety · fixed</h2>
+    <ul class="safety" style="color:var(--d3);font-size:13px;margin:0;padding-left:18px">
       <li>Nex has <b>no</b> file, shell, network or process capability. Those code paths don't exist.</li>
       <li>The only app Nex may launch is Amazon Music.</li>
       <li>MCP tools matching shell / file / process / download patterns are blocked even if a server offers them.</li>
@@ -70,8 +70,8 @@
     </ul>
   </div>
 
-  <div style="position:sticky;bottom:0;padding:14px 0;background:linear-gradient(transparent,var(--bg) 40%);display:flex;gap:10px;align-items:center">
-    <button class="primary" id="save">Save</button><span id="saved" style="color:var(--ok);opacity:0;transition:.3s">Saved ✓</span>
+  <div style="position:sticky;bottom:0;padding:14px 0;background:linear-gradient(transparent,#000 40%);display:flex;gap:10px;align-items:center">
+    <button class="primary" id="save">Save</button><span id="saved" style="color:#fff;opacity:0;transition:.3s">Saved</span>
   </div>
 </div>
 
@@ -103,13 +103,13 @@ function renderServers() {
     d.innerHTML = `
       <div class="head"><b>${preset.label || name}</b><span class="pill" data-status>…</span>
         <label class="switch"><input type="checkbox" data-k="enabled" ${cfg.enabled ? 'checked' : ''}> enabled</label>
-        <button class="ghost" data-act="test">test</button><button class="ghost" data-act="reconnect">reconnect</button><button class="ghost" data-act="remove">✕</button></div>
+        <button class="ghost" data-act="test">test</button><button class="ghost" data-act="reconnect">reconnect</button><button class="ghost" data-act="remove">×</button></div>
       <div class="row"><label>transport</label><select data-k="transport"><option ${cfg.transport==='stdio'?'selected':''}>stdio</option><option ${cfg.transport==='http'?'selected':''}>http</option></select></div>
       <div class="row"><label>command</label><input type="text" data-k="command" value="${(cfg.command||'').replace(/"/g,'&quot;')}"></div>
       <div class="row"><label>args (JSON array)</label><input type="text" data-k="args" value='${JSON.stringify(cfg.args||[])}'></div>
       <div class="row"><label>url (http)</label><input type="text" data-k="url" value="${cfg.url||''}"></div>
       ${preset.notes ? `<div class="row"><label></label><small>${preset.notes}</small></div>` : ''}
-      <div class="row"><label>tools</label><span data-tools style="color:var(--dim);font-size:12px">—</span></div>`;
+      <div class="row"><label>tools</label><span data-tools style="color:var(--d3);font-size:12px">—</span></div>`;
     d.querySelector('[data-act=remove]').onclick = () => { delete S.mcp[name]; renderServers(); };
     d.querySelector('[data-act=reconnect]').onclick = async () => { await save(); await fetch(`/api/mcp/${name}/reconnect`, { method: 'POST' }); loadMcp(); };
     d.querySelector('[data-act=test]').onclick = async () => { const r = await (await fetch(`/api/mcp/${name}/test`, { method: 'POST' })).json(); alert(JSON.stringify(r, null, 1)); };
@@ -137,7 +137,7 @@ async function loadMusic() { try { const m = await (await fetch('/api/music')).j
 async function loadMemory() {
   // memory arrives over ws; simplest: open a ws just for hello
   const ws = new WebSocket((location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/ws');
-  ws.onmessage = e => { const { event, data } = JSON.parse(e.data); if (event === 'hello' || event === 'memory') { const m = event === 'hello' ? data.memory : data; const ul = $('#notes'); ul.innerHTML = ''; (m.notes || []).forEach((n, i) => { const li = document.createElement('li'); li.innerHTML = `<span>${n}</span><button class="ghost" data-i="${i}">✕</button>`; li.querySelector('button').onclick = () => ws.send(JSON.stringify({ type: 'note_remove', idx: i })); ul.appendChild(li); }); if (!(m.notes || []).length) ul.innerHTML = '<li style="color:var(--dim)">no long-term notes yet</li>'; } };
+  ws.onmessage = e => { const { event, data } = JSON.parse(e.data); if (event === 'hello' || event === 'memory') { const m = event === 'hello' ? data.memory : data; const ul = $('#notes'); ul.innerHTML = ''; (m.notes || []).forEach((n, i) => { const li = document.createElement('li'); li.innerHTML = `<span>${n}</span><button class="ghost" data-i="${i}">×</button>`; li.querySelector('button').onclick = () => ws.send(JSON.stringify({ type: 'note_remove', idx: i })); ul.appendChild(li); }); if (!(m.notes || []).length) ul.innerHTML = '<li style="color:var(--d3)">no long-term notes yet</li>'; } };
   $('#clear-conv').onclick = () => { if (confirm('Clear the conversation window and summary?')) ws.send(JSON.stringify({ type: 'clear' })); };
 }
 async function save() {

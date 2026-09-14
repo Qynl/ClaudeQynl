@@ -57,3 +57,7 @@ QA = _o({"acceptance": {"type": "array", "items": _o({"system": S, "tests": SA})
 PLAN_OPT = _o({"score": I, "strengths": SA})
 PLAN_PES = _o({"score": I, "problems": SA, "must_fix": SA})
 PLAN_JUDGE = _o({"verdict": {"type": "string", "enum": ["approve", "revise"]}, "instructions": S})
+
+PESSIMIST_LITE = _o({"score": I, "problems": SA, "must_fix": SA, "verdict": {"type": "string", "enum": ["pass", "fail"]}})
+SLICE_REVIEW = _o({"greenlight": B, "score": I, "what_works": SA, "must_change_before_scaling": SA,
+                   "extra_tasks": {"type": "array", "items": _o({"title": S, "kind": S, "detail": S, "acceptance": S})}})

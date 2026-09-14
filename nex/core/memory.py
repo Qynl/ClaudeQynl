@@ -111,6 +111,12 @@ class PlanStore:
         self.path.write_text(json.dumps(self.plan, indent=1, ensure_ascii=False), encoding="utf-8")
 
     def new(self, goal: str, phases: list[dict]):
+        seen = set()
+        for pi, ph in enumerate(phases):
+            for ti, t in enumerate(ph.get("tasks", [])):
+                if not t.get("id") or t["id"] in seen:
+                    t["id"] = f"p{pi + 1}t{ti + 1}"
+                seen.add(t["id"]); t.setdefault("status", "todo")
         self.plan = {"goal": goal, "phases": phases, "status": "running", "log": [], "created": time.time(),
                      "current": None}
         self.save()
