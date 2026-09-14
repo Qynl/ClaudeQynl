@@ -22,7 +22,6 @@
     <div class="row"><label>GPU preset</label><button class="ghost" id="preset-16gb">Apply "16 GB GPU" preset</button><small>num_ctx 8192 · temp 0.3 · low effort · model pinned in VRAM. For RX 9060 XT / RTX 4060 Ti 16 GB etc.</small></div>
     <div class="row"><label>Live stats</label><span id="llm-stats" style="color:var(--dim);font-size:12px">—</span></div>
     <div class="row"><label>Proactive ideas</label><label class="switch"><input type="checkbox" id="proactive"> Nex may speak up on its own with ideas / bugs</label></div>
-    <div class="row"><label>Theme</label><select id="theme"><option>cyan</option><option>purple</option><option>green</option><option>orange</option><option>pink</option><option>white</option></select></div>
   </div>
 
   <div class="card">
@@ -78,7 +77,7 @@
 
 <script>
 const $ = s => document.querySelector(s);
-const FIELDS = ['ollama_host','model','num_ctx','temperature','think','proactive','theme','voice_enabled','wake_word','language','stt_engine','whisper_model','tts_engine','piper_voice','music_poll'];
+const FIELDS = ['ollama_host','model','num_ctx','temperature','think','proactive','voice_enabled','wake_word','language','stt_engine','whisper_model','tts_engine','piper_voice','music_poll'];
 let S = {};
 async function load() {
   S = await (await fetch('/api/settings')).json();
