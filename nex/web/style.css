@@ -103,3 +103,22 @@ button.ghost:hover { background:rgba(255,255,255,.1); }
 #mic-dot.wake { width:10px; height:10px; box-shadow:0 0 18px var(--ok); animation:pulse .6s infinite; }
 body.ui-visible #mic-dot { opacity:0; }
 #status { top:68%; } #thought { top:calc(68% + 26px); }
+
+/* ---- mode chip ---- */
+#mode-chip { position:fixed; left:50%; top:calc(68% + 60px); transform:translateX(-50%); display:flex; position:fixed; background:rgba(14,18,28,.55); border:1px solid var(--border); border-radius:999px; padding:3px; backdrop-filter:blur(10px); opacity:.55; transition:opacity .3s, transform .3s; z-index:2; }
+#mode-chip:hover, body.ui-visible #mode-chip { opacity:1; }
+#mode-chip button { position:relative; z-index:1; background:transparent; border:0; color:var(--dim); font:600 11.5px/1 system-ui; letter-spacing:.6px; text-transform:uppercase; padding:7px 16px 7px 12px; border-radius:999px; cursor:pointer; display:flex; align-items:center; gap:7px; transition:color .3s; }
+#mode-chip button .ico { font-size:12px; opacity:.8; }
+#mode-chip button.on { color:#07090f; }
+#mode-slider { position:absolute; top:3px; bottom:3px; left:3px; width:calc(50% - 3px); border-radius:999px; background:var(--acc); box-shadow:0 0 18px color-mix(in srgb, var(--acc) 60%, transparent); transition:transform .45s cubic-bezier(.2,.9,.25,1.15), background .4s; }
+#mode-chip.build #mode-slider { transform:translateX(100%); background:#fbbf24; box-shadow:0 0 18px rgba(251,191,36,.6); }
+#mode-chip.busy { pointer-events:none; opacity:.35; }
+.plan-tabs { display:flex; gap:2px; padding:6px 10px 0; }
+.plan-tabs button { flex:1; background:transparent; border:0; border-bottom:2px solid transparent; color:var(--dim); font-size:11.5px; padding:5px; cursor:pointer; }
+.plan-tabs button.on { color:var(--fg); border-color:var(--acc); }
+.gdd h4 { margin:10px 0 4px; font-size:11px; color:var(--dim); text-transform:uppercase; letter-spacing:.4px; }
+.gdd p, .gdd li { margin:2px 0; font-size:12.5px; } .gdd ul { margin:0; padding-left:16px; }
+.gdd .sw { display:inline-block; width:12px; height:12px; border-radius:3px; vertical-align:-2px; margin-right:4px; border:1px solid rgba(255,255,255,.15); }
+.stage { display:flex; gap:6px; align-items:center; font-size:11px; color:var(--dim); padding:4px 12px; }
+.stage b { color:var(--fg); font-weight:500; }
+.ledger li { font-size:12px; padding:3px 0; border-bottom:1px solid var(--border); color:var(--fg); }

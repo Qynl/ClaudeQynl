@@ -1,7 +1,7 @@
 /* NEX EYES RENDERER — canvas, 60fps, blends a state loop + one-shot overlays + micro-behaviour */
 (function () {
   const { A, STATE_ANIM, IDLE_FIDGETS, MUSIC_VARIANTS } = window.NexAnims;
-  const abs = Math.abs;
+  const abs = Math.abs; const ease = (x) => x < .5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2;
   const canvas = document.getElementById('eyes');
   const ctx = canvas.getContext('2d');
   let W = 0, H = 0, DPR = 1;
@@ -14,6 +14,9 @@
 
   const state = {
     loopName: 'idle', loopStart: performance.now() / 1000,
+    prevLoop: null, prevLoopStart: 0, crossfade: 0.55,   // loop → loop crossfade
+    transition: null,                                     // {steps:[{name,start,dur}], target}
+    propAlpha: {},                                        // per-prop fade 0..1
     shots: [],                       // {name, start}
     ctx: { beat: 0, energy: 0 },
     music: false, musicVariant: 'music_vibe', musicVariantAt: 0,
@@ -39,22 +42,52 @@
   const api = {
     setState(st, anim) {
       const name = anim && A[anim] ? anim : (STATE_ANIM[st] || 'idle');
-      if (A[name] && A[name](0, state.ctx).loop !== true && A[name](0, state.ctx).duration) { api.play(name); return; }
-      if (name !== state.loopName) { state.loopName = name; state.loopStart = now(); }
+      const m = A[name].meta || {};
+      if (m.kind === 'shot') { api.play(name); return; }
+      state.userLoop = name;
+      if (state.music && name === 'idle') { return; }  // stay vibing while music plays
+      api.setLoop(name);
+    },
+    /** switch to a new loop, playing exit/enter clips when leaving/entering a family */
+    setLoop(name) {
+      if (!A[name]) return;
+      const target = state.transition ? state.transition.target : state.loopName;
+      if (name === target) return;
+      const from = A[state.loopName].meta || {}, to = A[name].meta || {};
+      const sameFamily = from.family && from.family === to.family;
+      const steps = [];
+      const t0 = now();
+      let acc = 0;
+      if (!sameFamily && from.exit && A[from.exit]) { const d = A[from.exit](0, state.ctx).duration || 1; steps.push({ name: from.exit, start: t0 + acc, dur: d }); acc += d - .15; }
+      if (!sameFamily && to.enter && A[to.enter]) { const d = A[to.enter](0, state.ctx).duration || 1; steps.push({ name: to.enter, start: t0 + acc, dur: d }); acc += d - .15; }
+      state.transition = { steps, target: name, switchAt: t0 + (steps.length ? Math.max(0, acc - (to.enter ? (A[to.enter](0, state.ctx).duration || 1) * .45 : 0)) : 0), started: false };
+      if (!steps.length) beginLoop(name);
     },
     play(name) { if (!A[name]) return; state.shots = state.shots.filter(s => s.name !== name); state.shots.push({ name, start: now() }); },
     setMusic(on, energy) {
-      if (on && !state.music) { api.play('music_start'); state.musicVariantAt = now(); }
-      if (!on && state.music) api.play('music_pause');
-      state.music = on; state.ctx.energy = energy || .6;
+      state.ctx.energy = energy || .6;
+      if (on === state.music) return;
+      state.music = on;
+      if (on) { state.musicVariantAt = now(); api.setLoop(state.musicVariant); }
+      else if (!state.transition) api.setLoop(state.userLoop || 'idle');
     },
+    setMusicPaused(paused) { if (!state.music) return; api.setLoop(paused ? 'music_paused' : state.musicVariant); },
     setTheme(name) { baseHue = THEMES[name] ?? THEMES.cyan; baseSat = name === 'white' ? 10 : 95; },
     setHidden(h) { state.hidden = h; },
     list: () => Object.keys(A),
+    meta: (n) => (A[n] && A[n].meta) || {},
   };
   window.NexEyes = api;
 
   const now = () => performance.now() / 1000;
+  function beginLoop(name) { state.prevLoop = state.loopName; state.prevLoopStart = state.loopStart; state.loopName = name; state.loopStart = now(); }
+  function tickTransition(t) {
+    const tr = state.transition; if (!tr) return;
+    for (const st of tr.steps) { if (!st.fired && t >= st.start) { st.fired = true; state.shots = state.shots.filter(x => x.name !== st.name); state.shots.push({ name: st.name, start: t, transition: true }); } }
+    if (!tr.started && t >= tr.switchAt) { tr.started = true; beginLoop(tr.target); }
+    const done = tr.steps.every(x => x.fired && t >= x.start + x.dur);
+    if (tr.started && done) state.transition = null;
+  }
 
   // pointer tracking (eyes follow cursor)
   window.addEventListener('mousemove', (e) => { state.mouse.x = e.clientX; state.mouse.y = e.clientY; state.mouse.active = true; state.mouse.last = now(); });
@@ -82,14 +115,17 @@
     const pose = basePose();
     // loop
     let loopName = state.loopName;
-    if (state.music && (loopName === 'idle' || loopName.startsWith('idle') || loopName === 'music_vibe')) {
-      if (t - state.musicVariantAt > 14) { state.musicVariant = MUSIC_VARIANTS[(Math.random() * MUSIC_VARIANTS.length) | 0]; state.musicVariantAt = t; }
-      loopName = state.musicVariant;
+    if (state.music && (A[loopName].meta || {}).family === 'music' && loopName !== 'music_paused' && t - state.musicVariantAt > 14) {
+      let v; do { v = MUSIC_VARIANTS[(Math.random() * MUSIC_VARIANTS.length) | 0]; } while (v === state.musicVariant);
+      state.musicVariant = v; state.musicVariantAt = t; api.setLoop(v);
     }
+    tickTransition(t);
     const lt = t - state.loopStart;
-    const fadeIn = Math.min(1, lt / .45);
-    merge(pose, A[loopName] ? A[loopName](lt, state.ctx) : A.idle(lt, state.ctx), fadeIn);
-    if (fadeIn < 1) merge(pose, A.idle(lt), 0); // nothing, keeps base
+    const xf = Math.min(1, lt / state.crossfade);
+    const inTransition = state.transition && !state.transition.started;
+    if (state.prevLoop && xf < 1 && A[state.prevLoop]) merge(pose, A[state.prevLoop](t - state.prevLoopStart, state.ctx), 1 - ease(xf));
+    // while an exit clip is playing, damp the old loop so the exit clip reads clearly
+    merge(pose, A[loopName] ? A[loopName](lt, state.ctx) : A.idle(lt, state.ctx), inTransition ? .35 * ease(xf) : ease(xf));
 
     // one-shots
     state.shots = state.shots.filter(s => {
@@ -98,17 +134,17 @@
       const p = def(st, state.ctx);
       const dur = p.duration || 1;
       if (st > dur) return false;
-      const w = Math.min(1, st / .12) * Math.min(1, (dur - st) / .25);
+      const w = s.transition ? Math.min(1, st / .08) : Math.min(1, st / .12) * Math.min(1, (dur - st) / .25);
       merge(pose, p, w);
       return true;
     });
 
     // micro behaviour: auto blink / fidget while idle
     if (t - state.lastBlink > state.nextBlink && pose.lidT < .5) { state.lastBlink = t; state.nextBlink = 2 + Math.random() * 5; api.play(Math.random() < .12 ? 'double_blink' : 'blink'); }
-    if (state.loopName === 'idle' && !state.music && t - state.lastFidget > state.nextFidget) {
+    if (state.loopName === 'idle' && !state.music && !state.transition && t - state.lastFidget > state.nextFidget) {
       state.lastFidget = t; state.nextFidget = 5 + Math.random() * 9;
       const f = IDLE_FIDGETS[(Math.random() * IDLE_FIDGETS.length) | 0];
-      if (A[f](0).loop) { state.loopName = f; state.loopStart = t; setTimeout(() => { if (state.loopName === f) { state.loopName = 'idle'; state.loopStart = now(); } }, 4000); }
+      if ((A[f].meta || {}).kind === 'loop') { api.setLoop(f); setTimeout(() => { if (state.loopName === f) api.setLoop('idle'); }, 4500); }
       else api.play(f);
     }
     // cursor follow (subtle, only while idle-ish)
@@ -211,9 +247,9 @@
   // ---------- props ----------
   const P = {};
   P.headset = (t, w, cx, cy, hue) => {
-    const s = state.scale; const a = Math.min(1, typeof t === 'number' && t <= 1 ? t : 1);
+    const s = state.scale; const a = Math.min(1, typeof t === 'number' && t <= 1 ? Math.max(0, t) : 1);
     const span = EYE.gap / 2 + EYE.w + 40 * s;
-    ctx.save(); ctx.globalAlpha = a; ctx.translate(cx, cy - (1 - a) * 40);
+    ctx.save(); ctx.globalAlpha *= Math.min(1, a * 1.5); ctx.translate(cx, cy - (1 - a) * 140);
     ctx.lineCap = 'round'; ctx.lineWidth = 16 * s; ctx.strokeStyle = '#1b2230';
     ctx.beginPath(); ctx.arc(0, 30 * s, span, Math.PI * 1.08, Math.PI * 1.92); ctx.stroke();
     ctx.lineWidth = 6 * s; ctx.strokeStyle = `hsl(${hue} 90% 60%)`; ctx.beginPath(); ctx.arc(0, 30 * s, span, Math.PI * 1.1, Math.PI * 1.9); ctx.stroke();
@@ -269,6 +305,8 @@
   P.hand_headset = (t, w, cx, cy, hue) => { const s = state.scale; const span = EYE.gap / 2 + EYE.w + 40 * s; ctx.save(); ctx.translate(cx - span - 30 * s, cy + 10 * s + Math.sin(t * 6) * 3 * s); ctx.rotate(-.5); ctx.font = `${90 * s}px sans-serif`; ctx.textAlign = 'center'; ctx.fillText('🤚', 0, 30 * s); ctx.restore(); };
   P.equalizer = (t, w, cx, cy, hue) => { const s = state.scale; const y = cy + EYE.h / 2 + 60 * s; ctx.save(); for (let i = 0; i < 16; i++) { const h = (6 + abs(Math.sin(t * 7 + i * 1.3) * Math.sin(t * 3 + i)) * 40) * s; ctx.fillStyle = `hsl(${(hue + i * 12) % 360} 90% 60%)`; rr(cx - 120 * s + i * 15 * s, y - h, 10 * s, h, 3 * s); ctx.fill(); } ctx.restore(); };
 
+  P.agents = (t, w, cx, cy, hue) => { const s = state.scale; const names = [['D', 200], ['T', 275], ['A', 330], ['Q', 140]]; const y = cy - EYE.h / 2 - 70 * s; ctx.save(); names.forEach(([n, h], i) => { const active = Math.floor(t * 1.1) % 4 === i; const x = cx + (i - 1.5) * 64 * s; const r = (14 + (active ? 4 : 0)) * s; ctx.fillStyle = `hsl(${h} 80% ${active ? 65 : 30}%)`; if (active) { ctx.shadowColor = `hsl(${h} 90% 60%)`; ctx.shadowBlur = 22 * s; } ctx.beginPath(); ctx.arc(x, y + (active ? -4 : 0) * s, r, 0, 7); ctx.fill(); ctx.shadowBlur = 0; ctx.fillStyle = active ? '#000' : 'rgba(255,255,255,.5)'; ctx.font = `bold ${13 * s}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(n, x, y + (active ? -4 : 0) * s); if (i < 3) { ctx.strokeStyle = 'rgba(255,255,255,.15)'; ctx.lineWidth = 2 * s; ctx.beginPath(); ctx.moveTo(x + r, y); ctx.lineTo(x + 64 * s - r, y); ctx.stroke(); } }); ctx.restore(); };
+
   // ---------- main loop ----------
   let last = now();
   function frame() {
@@ -285,10 +323,15 @@
     ctx.translate(cx, cy); ctx.rotate(pose.bodyR); ctx.translate(-cx, -cy);
     // props behind (headset band)
     if (pose.props.includes('headset')) P.headset(pose.propAnim, W, cx, cy, hue);
+    else if (state.propAlpha.headset) { ctx.globalAlpha = state.propAlpha.headset; P.headset(1, W, cx, cy, hue); ctx.globalAlpha = 1; }
     drawEye('l', pose, hue, cx - EYE.gap / 2 - EYE.w / 2, cy);
     drawEye('r', pose, hue, cx + EYE.gap / 2 + EYE.w / 2, cy);
-    ctx.globalAlpha = Math.min(1, pose.propW || 1);
-    for (const p of pose.props) if (p !== 'headset' && P[p]) P[p](pose.propAnim, W, cx, cy, hue);
+    // per-prop alpha fade (in .18s / out .35s) so props never pop
+    const want = new Set(pose.props);
+    for (const p of want) state.propAlpha[p] = Math.min(1, (state.propAlpha[p] || 0) + dt / .18);
+    for (const p in state.propAlpha) if (!want.has(p)) { state.propAlpha[p] -= dt / .35; if (state.propAlpha[p] <= 0) delete state.propAlpha[p]; }
+    for (const p in state.propAlpha) { if (p === 'headset' || !P[p]) continue; ctx.globalAlpha = state.propAlpha[p] * Math.min(1, pose.propW || 1); P[p](pose.propAnim, W, cx, cy, hue); }
+    ctx.globalAlpha = 1;
     ctx.restore();
 
     // beat phase for music from a simple internal clock unless provided

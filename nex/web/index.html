@@ -16,6 +16,12 @@
 
 <div id="thought"></div>
 
+<div id="mode-chip" title="Click to switch mode">
+  <button data-mode="plan"><span class="ico">◈</span>Plan</button>
+  <button data-mode="build"><span class="ico">◆</span>Build</button>
+  <i id="mode-slider"></i>
+</div>
+
 <div id="music-bar" class="hidden">
   <span id="music-title"></span>
   <div class="music-controls">
@@ -50,6 +56,7 @@
     </span>
   </div>
   <div class="plan-bar"><div id="plan-fill"></div></div>
+  <div class="plan-tabs"><button data-tab="tasks" class="on">Tasks</button><button data-tab="gdd">Design</button><button data-tab="ledger">Built</button></div>
   <div id="plan-body"></div>
 </div>
 

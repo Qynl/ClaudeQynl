@@ -17,6 +17,7 @@ from .llm import Ollama, parse_json_loose
 from .mcp import MCPManager
 from .memory import Memory, PlanStore
 from .music import AmazonMusic
+from .planning import PrePro
 
 Emit = Callable[[str, dict], Awaitable[None]]
 
@@ -44,6 +45,8 @@ class Nex:
         self._last_activity = time.time()
         self._idle_task = asyncio.create_task(self._idle_loop())
         self.pending_consent: dict | None = None
+        self.mode = self.plan.plan.get('mode', 'plan')   # 'plan' | 'build'
+        self.ledger: list[str] = self.plan.plan.get('ledger', [])
 
     # ------------------------------------------------------------ utilities
     def _engine_knowledge(self) -> str:
@@ -111,6 +114,29 @@ class Nex:
         except Exception:
             pass
 
+    # ------------------------------------------------------------ modes
+    async def set_mode(self, mode: str):
+        if mode not in ("plan", "build") or mode == self.mode:
+            return
+        self.mode = mode
+        self.plan.plan["mode"] = mode; self.plan.save()
+        await self.emit("mode", {"mode": mode})
+        await self.set_state(self.state, self.status_text, anim=f"mode_{mode}")
+        if mode == "build":
+            if self.plan.plan.get("phases") and self.plan.plan.get("status") in ("planned", "paused", "stopped"):
+                await self.say("Build mode. I have a plan ready — say go and I'll start building.", kind="proactive")
+            else:
+                await self.say("Build mode. Tell me what to build, or switch to plan mode to design a full game first.", kind="proactive")
+        else:
+            await self.say("Plan mode. Describe the game and I'll run design, architecture, art and QA before writing a task graph.", kind="proactive")
+
+    def _ledger_add(self, line: str):
+        line = line.strip()[:160]
+        if line and line not in self.ledger:
+            self.ledger.append(line)
+            self.ledger = self.ledger[-120:]
+            self.plan.plan["ledger"] = self.ledger; self.plan.save()
+
     # ------------------------------------------------------------ chat entry
     async def handle_user(self, text: str, via_voice: bool = False):
         self._last_activity = time.time()
@@ -146,9 +172,20 @@ class Nex:
             if kind == "music":
                 await self._do_music(intent, text)
             elif kind == "plan_control":
-                await self._plan_control(intent.get("plan_control") or "status")
+                cmd = intent.get("plan_control") or "status"
+                if cmd == "resume" and self.plan.plan.get("status") == "planned":
+                    await self.set_mode("build"); self._start_loop(); await self.say("Building. I'll report every few tasks.")
+                else:
+                    await self._plan_control(cmd)
             elif kind == "build_game":
-                await self.start_build(intent.get("game_brief") or text)
+                if self.mode == "plan":
+                    await self.start_planning(intent.get("game_brief") or text)
+                else:
+                    if self.plan.plan.get("phases") and self.plan.plan.get("status") in ("planned", "paused", "stopped"):
+                        await self.say("I already have a plan. Say go to build it, or switch to plan mode to redesign.")
+                    else:
+                        await self.say("No plan yet — I'll draft one quickly first.", kind="proactive")
+                        await self.start_planning(intent.get("game_brief") or text, then_build=True)
             elif kind == "small_task":
                 await self._small_task(text)
             elif kind == "inspect":
@@ -249,7 +286,8 @@ class Nex:
         style = json.dumps(self.plan.plan.get("meta", {}).get("style") or {}) if self.plan.plan.get("meta") else ""
         naming = json.dumps(self.plan.plan.get("meta", {}).get("naming") or {}) if self.plan.plan.get("meta") else ""
         sys_prompt = (f"{P.BUILDER}\n\n{P.TOOL_RULES}\n\n{self._engine_knowledge()}\n\n"
-                      f"PROJECT CONTEXT:\n{self.mem.context_block()[:2200]}\nSTYLE: {style}\nNAMING: {naming}")
+                      f"PROJECT CONTEXT:\n{self.mem.context_block()[:2200]}\nSTYLE: {style}\nNAMING: {naming}\n"
+                      f"ALREADY BUILT (ledger, do not recreate, reuse names):\n- " + "\n- ".join(self.ledger[-40:] or ["nothing yet"]))
         if read_only:
             sys_prompt += "\n\nREAD-ONLY MODE: you may only inspect. Any code that creates, destroys or sets properties is forbidden."
         user = f"TASK: {task['title']}\nDETAIL: {task.get('detail','')}\nACCEPTANCE: {task.get('acceptance','')}"
@@ -327,32 +365,45 @@ class Nex:
         return judge
 
     # ------------------------------------------------------------ autonomous build
-    async def start_build(self, brief: str):
+    async def start_planning(self, brief: str, then_build: bool = False):
         if self._build_task and not self._build_task.done():
-            await self.say("I'm already building something. Say 'stop' first if you want a new project.")
+            await self.say("I'm already building something. Say stop first if you want a new project.")
             return
-        await self.set_state("thinking", "Planning the game…", anim="plan")
-        await self.emit("state", {"state": "thinking", "text": "Planning the game…", "anim": "compile"})
-        await self.say("On it. Let me plan this like a real production first.", kind="proactive")
-        engines = [s["name"] for s in self.mcp.status() if s["connected"]]
-        plan = await self.llm.json(P.PLANNER, f"GAME BRIEF: {brief}\nCONNECTED ENGINES: {engines or ['roblox (assumed)']}\nUSER NOTES: {self.mem.context_block()[:1200]}", 0.5)
-        phases = plan.get("phases") or []
-        if not phases:
+        await self.set_state("planning", "Pre-production…", anim="plan_subagents")
+        await self.say("Starting pre-production: designer, architect, art director, QA, then the producer.", kind="proactive")
+
+        async def stage(key, label):
+            await self.set_state("planning", label, anim="plan_subagents")
+            await self.emit("plan_stage", {"stage": key, "label": label})
+
+        engines = [x["name"] for x in self.mcp.status() if x["connected"]]
+        try:
+            result = await PrePro(self.llm, stage).run(brief, self.mem.context_block()[:1500], engines)
+        except Exception as e:
+            await self.set_state("error", "Planning failed", anim="error")
+            await self.say(f"Pre-production failed: {str(e)[:120]}")
+            return
+        if not result["phases"]:
             await self.say("I couldn't produce a plan, could you describe the game a bit more?")
             return
-        for pi, ph in enumerate(phases):
-            for ti, t in enumerate(ph.get("tasks", [])):
-                t.setdefault("id", f"p{pi+1}t{ti+1}")
-                t["status"] = "todo"
-        self.plan.new(brief, phases)
-        self.plan.plan["meta"] = {k: plan.get(k) for k in ("title", "pitch", "engine", "core_loop", "monetization")}
+        self.plan.new(brief, result["phases"])
+        self.plan.plan["meta"] = result["meta"]; self.plan.plan["gdd"] = result["gdd"]
+        self.plan.plan["status"] = "planned"; self.plan.plan["mode"] = self.mode; self.plan.plan["ledger"] = self.ledger = []
         self.plan.save()
-        self.mem.state["project"] = {"title": plan.get("title"), "pitch": plan.get("pitch"), "engine": plan.get("engine"), "brief": brief}
+        self.mem.state["project"] = {"title": result["meta"].get("title"), "pitch": result["meta"].get("pitch"), "engine": result["meta"].get("engine"), "brief": brief}
         self.mem.save()
         await self.emit("plan", self.plan.plan)
         pr = self.plan.progress()
-        await self.say(f"Plan ready: {plan.get('title','the game')} — {len(phases)} phases, {pr['total']} tasks. Starting with {phases[0]['name']}.", kind="proactive")
-        self._start_loop()
+        rv = result["gdd"].get("plan_review", {}).get("pessimist", {})
+        await self.set_state("idle", "Plan ready", anim="success")
+        await self.say(f"Plan ready: {result['meta'].get('title','the game')}. {len(result['phases'])} phases, {pr['total']} tasks. "
+                       f"The pessimist scored it {rv.get('score','?')} out of 10." + (" Starting the build." if then_build else " Switch to build mode and say go when you like it."), kind="proactive")
+        if then_build:
+            await self.set_mode("build")
+            self._start_loop()
+
+    async def start_build(self, brief: str):  # backwards compat
+        await self.start_planning(brief, then_build=True)
 
     def _start_loop(self):
         self._stop = False
@@ -373,6 +424,10 @@ class Nex:
 
     async def resume_if_needed(self):
         """Called at startup: continue an interrupted build exactly where it was."""
+        if self.plan.plan.get("status") == "planned":
+            await self.emit("plan", self.plan.plan)
+            await self.say(f"I have a finished plan for {self.plan.plan.get('meta',{}).get('title') or 'your game'}. Switch to build mode and say go.", kind="proactive", speak=False)
+            return
         if self.plan.is_active() and self.plan.next_task():
             self.plan.plan["status"] = "paused"
             self.plan.save()
@@ -401,6 +456,7 @@ class Nex:
                 judge = await self._review(task, report, outputs)
                 if judge.get("verdict") == "pass" and not report.upper().startswith("FAILED"):
                     self.plan.set_task(task["id"], status="done", fix="")
+                    self._ledger_add(f"{task['title']}: {report.replace('DONE:', '').strip()[:120]}")
                     pr = self.plan.progress()
                     if pr["done"] % 5 == 0 or pr["done"] == pr["total"]:
                         await self.say(f"{pr['done']} of {pr['total']} done — just finished {task['title']}.", kind="proactive")
@@ -444,9 +500,11 @@ class Nex:
             self._pause.clear(); self.plan.plan["status"] = "paused"; self.plan.save()
             await self.say("Paused. I remember exactly where I am.")
         elif cmd == "resume":
-            if not self.plan.is_active() and self.plan.plan.get("status") != "done":
+            if not self.plan.next_task():
                 await self.say("There's nothing to continue.")
                 return
+            if self.mode != "build":
+                await self.set_mode("build")
             if self._build_task and not self._build_task.done():
                 self._pause.set(); self.plan.plan["status"] = "running"; self.plan.save()
             else:

@@ -34,7 +34,13 @@ async def test_agent_loop():
         async def chat(self, messages, tools=None, json_mode=False, temperature=None):
             sys_p=messages[0]["content"]
             if json_mode:
-                if "PLANNER" in sys_p: return {"content":json.dumps({"title":"T","phases":[{"name":"P1","tasks":[{"title":"make baseplate","detail":"d","acceptance":"a"},{"title":"make script","detail":"d","acceptance":"a"}]}]}),"tool_calls":[]}
+                if "GAME DESIGNER" in sys_p: return {"content":json.dumps({"title":"T","pitch":"p","core_loop":["a"],"systems":[{"name":"Spawn"}]}),"tool_calls":[]}
+                if "TECHNICAL ARCHITECT" in sys_p: return {"content":json.dumps({"engine":"roblox","folders":{"map":"Map"},"remotes":[{"name":"Buy"}]}),"tool_calls":[]}
+                if "ART DIRECTOR" in sys_p: return {"content":json.dumps({"palette":{"sky":"1,2,3"}}),"tool_calls":[]}
+                if "QA LEAD" in sys_p: return {"content":json.dumps({"playtest_script":["walk"]}),"tool_calls":[]}
+                if "PRODUCER" in sys_p: return {"content":json.dumps({"phases":[{"name":"P1","tasks":[{"title":"make baseplate","detail":"d","acceptance":"a"},{"title":"make script","detail":"d","acceptance":"a"}]}]}),"tool_calls":[]}
+                if "PLAN JUDGE" in sys_p: return {"content":json.dumps({"verdict":"approve"}),"tool_calls":[]}
+                if "plan reviewer" in sys_p: return {"content":json.dumps({"score":7}),"tool_calls":[]}
                 if "OPTIMIST" in sys_p: return {"content":json.dumps({"score":8,"verdict":"pass"}),"tool_calls":[]}
                 if "PESSIMIST" in sys_p: return {"content":json.dumps({"score":6,"verdict":"pass","problems":[]}),"tool_calls":[]}
                 if "JUDGE" in sys_p: return {"content":json.dumps({"verdict":"pass","reason":"fine","fix_instructions":"","note_for_memory":"baseplate is 512x512"}),"tool_calls":[]}
@@ -54,14 +60,20 @@ async def test_agent_loop():
     tmp=pathlib.Path(__file__).parent/"_tmpdata"; tmp.mkdir(exist_ok=True); mem.DATA=tmp
     nx=ag.Nex(FakeLLM(), m, AmazonMusic(), emit, {"proactive":False})
     nx.mem.path=tmp/"m.json"; nx.plan.path=tmp/"p.json"; nx.plan.plan={"goal":"","phases":[],"status":"idle","log":[]}
-    await nx.start_build("obby game")
+    # plan mode: produces a plan but does not build
+    await nx.start_planning("obby game")
+    assert nx.plan.plan["status"]=="planned" and nx._build_task is None, nx.plan.plan["status"]
+    assert nx.plan.plan["gdd"]["design"]["title"]=="T" and nx.plan.plan["meta"]["naming"]["remotes"]==["Buy"]
+    # switch to build and go
+    await nx.set_mode("build"); nx._start_loop()
     await asyncio.wait_for(nx._build_task, 20)
+    assert len(nx.ledger)==2, nx.ledger
     pr=nx.plan.progress(); assert pr["done"]==2, pr
     assert nx.plan.plan["status"]=="done"
     assert "baseplate is 512x512" in nx.mem.state["notes"]
     kinds=[e for e,_ in events]; assert "review" in kinds and "tool" in kinds and "plan" in kinds
     await m.close_all(); nx._idle_task.cancel()
     import shutil; shutil.rmtree(tmp)
-    print("agent loop ok (2/2 tasks, reviewed, memory note stored)")
+    print("agent ok: pre-production -> planned -> build 2/2 tasks, reviewed, ledger + memory note stored")
 
 test_safety(); asyncio.run(test_mcp()); asyncio.run(test_agent_loop())

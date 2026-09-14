@@ -128,7 +128,7 @@ class App:
         await ws.send_str(json.dumps({"event": "hello", "data": {
             "state": self.nex.state, "text": self.nex.status_text, "settings": self.public_settings(),
             "plan": self.nex.plan.plan, "memory": self.nex.mem.state, "mcp": self.mcp.status(),
-            "history": self.nex.mem.recent_messages()[-20:],
+            "history": self.nex.mem.recent_messages()[-20:], "mode": self.nex.mode,
             "voice_backend": {"whisper": voice.whisper_available(), "piper": voice.piper_available()},
         }}, default=str))
         try:
@@ -149,6 +149,8 @@ class App:
                 elif t == "music":
                     r = await self.music.command(d.get("action", "toggle"))
                     await self.emit("music", r.get("now") or await self.music.now_playing())
+                elif t == "mode":
+                    await self.nex.set_mode(d.get("mode", "plan"))
                 elif t == "consent":
                     self.nex.playtest_consent = bool(d.get("ok"))
                     self.nex.pending_consent = None
