@@ -21,7 +21,7 @@
     statusEl.className = state;
     statusText.textContent = text || state;
     Eyes.setState(state, anim);
-    if (state === 'working' || state === 'reviewing') thought.textContent = text; else thought.textContent = '';
+    if (state === 'working' || state === 'reviewing') thought.textContent = text; else thought.textContent = (state === 'idle' && rec && !wantRec && settings.voice_enabled) ? 'click to enable voice' : '';
   }
 
   function addMsg(role, text, kind) {
@@ -53,13 +53,14 @@
         if (d.replace_stream && streamEl) { streamEl.textContent = d.text; streamEl = null; }
         else addMsg(d.role, d.text, d.kind);
         if (d.role === 'assistant') {
+          if (d.kind === 'proactive' || d.kind === 'consent') showUI(false);
           if (d.kind === 'proactive') { Eyes.play(/bug/i.test(d.text) ? (/fixed/i.test(d.text) ? 'bug_fixed' : 'bug_found') : /finished|done|ready/i.test(d.text) ? 'success' : 'idea'); }
           if (d.kind === 'consent') { $('#consent').classList.remove('hidden'); Eyes.play('playtest_ask'); }
           if (d.speak && settings.voice_enabled) speak(d.text);
           else reactToText(d.text);
         }
         break;
-      case 'stream_start': streamEl = addMsg('assistant', ''); break;
+      case 'stream_start': streamEl = addMsg('assistant', ''); showUI(false); break;
       case 'stream': if (streamEl) { streamEl.textContent += d.delta; log.scrollTop = log.scrollHeight; } break;
       case 'stream_end': break;
       case 'tool': { const n = d.name.split('__').pop(); addMsg('assistant', `⚙ ${n}${d.args?.command ? ': ' + String(d.args.command).slice(0, 80).replace(/\n/g, ' ') + '…' : ''}`, 'tool'); Eyes.play('tool_call'); break; }
@@ -101,7 +102,7 @@
   function renderPlan(p) {
     const box = $('#plan');
     if (!p || !p.phases || !p.phases.length) { box.classList.add('hidden'); return; }
-    if (p.status === 'running' || p.status === 'paused') box.classList.remove('hidden');
+    if ((p.status === 'running' || p.status === 'paused') && document.body.classList.contains('ui-visible') && !box.dataset.userClosed) box.classList.remove('hidden');
     $('#plan-title').textContent = (p.meta && p.meta.title) || p.goal || 'Plan';
     let total = 0, done = 0;
     const body = $('#plan-body'); body.innerHTML = '';
@@ -114,8 +115,8 @@
     $('#plan-fill').style.width = pct + '%';
   }
   document.querySelectorAll('#plan .plan-btns button[data-p]').forEach(b => b.onclick = () => send({ type: 'plan', cmd: b.dataset.p }));
-  $('#plan-close').onclick = () => $('#plan').classList.add('hidden');
-  $('#btn-plan').onclick = () => $('#plan').classList.toggle('hidden');
+  $('#plan-close').onclick = () => { $('#plan').classList.add('hidden'); $('#plan').dataset.userClosed = '1'; };
+  $('#btn-plan').onclick = () => { delete $('#plan').dataset.userClosed; $('#plan').classList.toggle('hidden'); };
 
   // ---------- anim picker ----------
   const picker = $('#anim-picker');
@@ -203,9 +204,10 @@
     rec.onerror = (e) => { if (e.error === 'not-allowed') { wantRec = false; toast('Microphone permission denied'); } };
     mic.onclick = () => { wantRec = !wantRec; if (wantRec) startRec(); else { rec.stop(); mic.classList.remove('on', 'wake'); setStatus('idle', 'Ready', 'idle'); } };
     // Try to auto-start listening (needs prior permission) after first user gesture
-    document.addEventListener('pointerdown', () => { if (!wantRec && !recOn && settings.voice_enabled && localStorage.nexAutoMic !== '0') { wantRec = true; startRec(); } }, { once: true });
+    // permission already granted earlier? start immediately without a click
+    navigator.permissions?.query({ name: 'microphone' }).then(p => { if (p.state === 'granted' && !wantRec) { wantRec = true; startRec(); firstClick = false; } }).catch(() => {});
   }
-  function startRec() { try { rec.start(); recOn = true; mic.classList.add('on'); toast(`Listening for “${settings.wake_word || 'Nex'}”`); } catch (e) { } }
+  function startRec() { try { rec.start(); recOn = true; mic.classList.add('on'); } catch (e) { } }
   function wakeUp() {
     if ('speechSynthesis' in window) speechSynthesis.cancel(); queue.length = 0; // barge-in: stop talking when user says the wake word
     awake = true; mic.classList.add('wake'); Eyes.play('wake_word');
@@ -235,11 +237,25 @@
     mic.onpointerdown = start; mic.onpointerup = () => { mr && mr.state === 'recording' && mr.stop(); mic.classList.remove('on'); };
   }
 
+  // ---------- minimal UI: drawer toggle + auto-hide ----------
+  const chat = $('#chat'); let hideT;
+  function showUI(persist) { chat.classList.remove('collapsed'); document.body.classList.add('ui-visible'); clearTimeout(hideT); if (!persist) hideT = setTimeout(hideUI, 12000); }
+  function hideUI() { if (document.activeElement === input && input.value) return; chat.classList.add('collapsed'); document.body.classList.remove('ui-visible'); picker.classList.add('hidden'); input.blur(); }
+  window.toggleUI = () => chat.classList.contains('collapsed') ? showUI(true) : hideUI();
+  let firstClick = true;
+  document.getElementById('eyes').addEventListener('click', () => { if (firstClick) { firstClick = false; if (settings.voice_enabled && rec && !wantRec) { wantRec = true; startRec(); Eyes.play('greet'); return; } } window.toggleUI(); });
+  document.addEventListener('mousemove', () => { if (!chat.classList.contains('collapsed')) { clearTimeout(hideT); hideT = setTimeout(hideUI, 12000); } });
+  input.addEventListener('focus', () => showUI(true));
+  // the mic status lives in a tiny dot when the drawer is closed
+  const micDot = $('#mic-dot');
+  new MutationObserver(() => { micDot.className = mic.className; }).observe(mic, { attributes: true, attributeFilter: ['class'] });
+
   // ---------- misc ----------
   let toastT;
   function toast(t) { const el = $('#toast'); el.textContent = t; el.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove('show'), 2200); }
   window.addEventListener('keydown', (e) => {
-    if (e.key === '/' && document.activeElement !== input) { e.preventDefault(); input.focus(); }
+    if (e.key === '/' && document.activeElement !== input) { e.preventDefault(); showUI(true); input.focus(); }
+    if (e.key === 'Tab') { e.preventDefault(); window.toggleUI(); }
     if (e.key === 'Escape') { if ('speechSynthesis' in window) speechSynthesis.cancel(); queue.length = 0; input.blur(); }
     if (e.key === 'm' && document.activeElement !== input) { mic.click(); }
     if (e.key === ' ' && document.activeElement !== input && rec && wantRec && !awake) { e.preventDefault(); wakeUp(); }

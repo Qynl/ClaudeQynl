@@ -25,7 +25,7 @@
   </div>
 </div>
 
-<div id="chat">
+<div id="chat" class="collapsed">
   <div id="log"></div>
   <div id="consent" class="hidden">
     <span>Nex wants to run a playtest.</span>
@@ -33,7 +33,7 @@
   </div>
   <form id="input-row">
     <button type="button" id="mic" title="Hold to talk / click to toggle listening">🎙</button>
-    <input id="input" autocomplete="off" placeholder='Talk to Nex… or say "Nex" out loud'>
+    <input id="input" autocomplete="off" placeholder="…">
     <button type="submit" id="send">➤</button>
   </form>
 </div>
@@ -53,7 +53,8 @@
   <div id="plan-body"></div>
 </div>
 
-<nav id="topbar">
+<div id="mic-dot" title="Voice"></div>
+<nav id="topbar" class="auto-hide">
   <button id="btn-plan" title="Build plan">📋</button>
   <button id="btn-anims" title="Try animations">✨</button>
   <button id="btn-pip" title="Pop out as always-on-top mini window">🗗</button>

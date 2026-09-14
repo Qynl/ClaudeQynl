@@ -91,3 +91,15 @@ button.ghost:hover { background:rgba(255,255,255,.1); }
 
 .msg.tool.err { color:#fbbf24; }
 .task em { color:var(--dim); font-style:normal; font-size:11px; }
+
+/* ---- minimal main page: eyes only ---- */
+#chat { transition:opacity .35s, transform .35s; }
+#chat.collapsed { opacity:0; transform:translate(-50%, 30px); pointer-events:none; }
+#topbar.auto-hide { opacity:0; transition:opacity .3s; }
+#topbar.auto-hide:hover, body.ui-visible #topbar.auto-hide { opacity:1; }
+#music-bar { opacity:0; transition:opacity .4s; } body.ui-visible #music-bar:not(.hidden), #music-bar:hover:not(.hidden) { opacity:1; }
+#mic-dot { position:fixed; left:50%; bottom:22px; transform:translateX(-50%); width:6px; height:6px; border-radius:50%; background:rgba(255,255,255,.12); transition:.3s; }
+#mic-dot.on { background:var(--ok); box-shadow:0 0 10px var(--ok); }
+#mic-dot.wake { width:10px; height:10px; box-shadow:0 0 18px var(--ok); animation:pulse .6s infinite; }
+body.ui-visible #mic-dot { opacity:0; }
+#status { top:68%; } #thought { top:calc(68% + 26px); }
