@@ -18,6 +18,8 @@ from .mcp import MCPManager
 from .memory import Memory, PlanStore
 from .music import AmazonMusic
 from .planning import PrePro
+from . import schemas as SCH
+from . import luau as LU
 
 Emit = Callable[[str, dict], Awaitable[None]]
 
@@ -108,7 +110,7 @@ class Nex:
         try:
             res = await self.llm.chat([{"role": "system", "content": P.COMPACTOR},
                                        {"role": "user", "content": f"PREVIOUS SUMMARY:\n{prev}\n\nNEW EXCERPT:\n{text}"}],
-                                      temperature=0.2)
+                                      temperature=0.2, num_predict=350, effort="fast")
             self.mem.set_summary(res["content"])
             await self.emit("memory", self.mem.state)
         except Exception:
@@ -159,9 +161,13 @@ class Nex:
                 await self.say("Alright, skipping the playtest.")
                 return
 
-        await self.set_state("thinking", "Thinking…", anim="think")
+        quick = self._quick_intent(text)
+        if quick:
+            intent = quick
+        else:
+            await self.set_state("thinking", "Thinking…", anim="think")
         try:
-            intent = await self.llm.json(P.INTENT, text, temperature=0.1)
+            intent = intent if quick else await self.llm.json(P.INTENT, text, temperature=0.0, schema=SCH.INTENT, num_predict=160, effort='fast', cache=True)
         except Exception as e:
             await self.set_state("error", "Ollama unreachable", anim="error")
             await self.say(f"I can't reach Ollama right now. {e}", speak=False)
@@ -203,6 +209,22 @@ class Nex:
                 await self.set_state("idle", "Ready", anim="idle")
             await self._compact_if_needed()
 
+    def _quick_intent(self, text: str) -> dict | None:
+        """Regex fast-path for unambiguous commands — saves a full LLM round-trip (~2-4 s)."""
+        l = text.lower().strip(" .!")
+        words = l.split()
+        if len(words) <= 4:
+            if l in ("pause", "pause the build", "hold on", "wait"): return {"intent": "plan_control", "plan_control": "pause"}
+            if l in ("continue", "resume", "go", "go on", "start", "start building", "build it", "keep going"): return {"intent": "plan_control", "plan_control": "resume"}
+            if l in ("stop", "stop building", "abort", "cancel"): return {"intent": "plan_control", "plan_control": "stop"}
+            if l in ("status", "progress", "where are you", "how far"): return {"intent": "plan_control", "plan_control": "status"}
+            m = {"next": "next", "next song": "next", "skip": "next", "previous": "previous", "back": "previous", "pause music": "pause", "pause the music": "pause",
+                 "play music": "play", "play": "play", "resume music": "play", "stop music": "pause", "louder": "volume_up", "quieter": "volume_down",
+                 "what song is this": "what", "what is this song": "what", "what's playing": "what", "open amazon music": "open"}
+            if l in m: return {"intent": "music", "music_action": m[l]}
+        if l.startswith(("remember that", "remember:", "don't forget", "note that")): return {"intent": "memory"}
+        return None
+
     async def _chat(self, text: str):
         msgs = [{"role": "system", "content": self._system()}] + self.mem.recent_messages()
         await self.set_state("thinking", "Thinking…", anim="think")
@@ -216,7 +238,7 @@ class Nex:
         await self.emit("message", {"role": "assistant", "text": buf, "speak": True, "replace_stream": True})
 
     async def _memory_cmd(self, text: str):
-        res = await self.llm.json("Extract the fact the user wants remembered (or forgotten). JSON: {\"action\":\"remember\"|\"forget\",\"fact\":str}", text)
+        res = await self.llm.json("Extract the fact the user wants remembered (or forgotten).", text, schema=SCH.MEMORY_CMD, num_predict=120, effort='fast')
         if res.get("action") == "remember" and res.get("fact"):
             self.mem.add_note(res["fact"])
             await self.say("Got it, I'll remember that.")
@@ -267,6 +289,11 @@ class Nex:
     async def _small_task(self, text: str):
         await self.set_state("working", "Working in Studio…", anim="work")
         report, outputs = await self._run_builder({"title": text, "detail": text, "acceptance": "The change exists in the scene, is verified by a read-only check, and has no errors."})
+        if not report.upper().startswith("FAILED"):
+            j = await self._review({"title": text, "kind": "small"}, report, outputs, light=True)
+            if j.get("verdict") != "pass":
+                await self.set_state("working", "Fixing after review…", anim="fix")
+                report, outputs = await self._run_builder({"title": text, "detail": text, "acceptance": "verified"}, j.get("fix_instructions", ""))
         if report.upper().startswith("FAILED"):
             await self.set_state("error", "Didn't work", anim="fail")
         else:
@@ -277,6 +304,25 @@ class Nex:
         await self.set_state("working", "Reading the place…", anim="scan")
         report, outputs = await self._run_builder({"title": f"INSPECT (read-only, do not modify anything): {text}", "detail": "Only run read-only code that prints facts. Do not create or change anything.", "acceptance": "A clear spoken summary of what was found."}, read_only=True)
         await self.say(report.replace("DONE:", "").strip())
+
+    async def _scene_snapshot(self) -> str:
+        srv = next((x for x in self.mcp.servers.values() if x.connected and any(t["name"] == "run_code" for t in x.tools)), None)
+        if not srv:
+            return ""
+        code = '''local out = {}
+local function walk(inst, d) if d > 2 then return end for _, c in ipairs(inst:GetChildren()) do
+  if #out > 140 then return end
+  local extra = ""
+  if c:IsA("BasePart") then extra = string.format(" size=%.0f,%.0f,%.0f", c.Size.X, c.Size.Y, c.Size.Z) elseif c:IsA("LuaSourceContainer") then extra = " src=" .. #c.Source end
+  table.insert(out, string.rep("  ", d) .. c.ClassName .. " " .. c.Name .. extra); walk(c, d + 1) end end
+for _, s in ipairs({workspace, game.ReplicatedStorage, game.ServerScriptService, game.ServerStorage, game.StarterGui, game.StarterPlayer}) do
+  table.insert(out, s.Name); walk(s, 1) end
+print(table.concat(out, "\\n"))'''
+        try:
+            r = await srv.call_tool("run_code", {"command": code})
+            return (r.get("text") or "")[:3500]
+        except Exception:
+            return ""
 
     # ------------------------------------------------------------ builder subagent
     async def _run_builder(self, task: dict, fix_instructions: str = "", read_only: bool = False) -> tuple[str, list[str]]:
@@ -297,13 +343,18 @@ class Nex:
         outputs: list[str] = []
         seen_calls: dict[str, int] = {}
         errors_in_row = 0
+        preflight_fails = 0
+        # give the builder a real snapshot of the place instead of letting it guess (one cheap MCP call, zero LLM)
+        snap = await self._scene_snapshot()
+        if snap:
+            msgs.append({"role": "system", "content": "CURRENT PLACE SNAPSHOT (top 2 levels):\n" + snap})
         for rnd in range(MAX_BUILDER_ROUNDS):
             await self._pause.wait()
             if self._stop:
                 return "FAILED: stopped by user", outputs
             await self.set_state("working", f"{'Inspecting' if read_only else 'Building'}: {task['title'][:40]}", anim="think" if rnd == 0 else ("read" if read_only else "work"))
             msgs = self._budget(msgs, 6000)
-            res = await self.llm.chat(msgs, tools=tools, temperature=0.25 if rnd < 3 else 0.45)
+            res = await self.llm.chat(msgs, tools=tools, temperature=0.15 if rnd < 3 else 0.35, effort="deep" if rnd == 0 else "normal", num_predict=2200)
             msgs.append({"role": "assistant", "content": res["content"], "tool_calls": res["tool_calls"]})
             if not res["tool_calls"]:
                 return (res["content"] or "DONE: (no report)"), outputs
@@ -319,9 +370,28 @@ class Nex:
                     msgs.append({"role": "tool", "content": "NEX_ERROR: you already ran this exact call twice. Change approach or report FAILED with the reason.", "name": name})
                     continue
                 payload = json.dumps(args).lower()
-                if read_only and any(k in payload for k in ("instance.new", ":destroy(", ".parent =", ":clone(", "= color3", ".source =")):
-                    msgs.append({"role": "tool", "content": "NEX_ERROR: read-only mode — this call would modify the place. Only inspect.", "name": name})
-                    continue
+                # ---- Luau pre-flight (local, instant): reject hallucinated APIs / broken blocks before Studio sees them
+                code_key = next((k for k in ("command", "code", "script", "source", "luau") if isinstance(args.get(k), str)), None)
+                is_roblox = "roblox" in name.lower() or name.endswith("__run_code")
+                if code_key and is_roblox:
+                    issues = LU.check(args[code_key], read_only=read_only)
+                    ok, msg_txt = LU.summarize(issues)
+                    if not ok:
+                        preflight_fails = preflight_fails + 1
+                        await self.set_state("working", "Pre-flight caught a bug", anim="side_eye")
+                        await self.emit("tool_result", {"name": name, "text": "PRE-FLIGHT REJECTED:\n" + msg_txt, "blocked": False, "error": True})
+                        msgs.append({"role": "tool", "content": "NEX_PREFLIGHT_REJECTED — fix these and call again (do not explain, just re-call):\n" + msg_txt, "name": name})
+                        if preflight_fails >= 5:
+                            return "FAILED: code kept failing pre-flight: " + msg_txt[:200], outputs
+                        continue
+                    code = args[code_key]
+                    is_verify = read_only or ("nex_verify" in payload) or ("instance.new" not in payload and ".source" not in payload and ".parent" not in payload and "print(" in payload)
+                    if is_verify:
+                        args = dict(args); args[code_key] = 'print("NEX_VERIFY")\n' + code
+                    elif "NEX_OK" in code:
+                        args = dict(args); args[code_key] = LU.wrap_for_studio(code, task["title"])
+                    if msg_txt:
+                        msgs.append({"role": "system", "content": "pre-flight warnings (fix next time): " + msg_txt[:400]})
                 is_write = any(k in payload for k in ("source", "instance.new", "create", "spawn", "set_", "destroy"))
                 anim = ("typing" if "source" in payload else "write") if is_write else ("scan" if read_only else "read")
                 short = name.split("__", 1)[-1]
@@ -344,21 +414,39 @@ class Nex:
         return "FAILED: ran out of tool rounds", outputs
 
     # ------------------------------------------------------------ review committee
-    async def _review(self, task: dict, report: str, outputs: list[str]) -> dict:
-        await self.set_state("reviewing", "Reviewing (optimist)", anim="review_pos")
-        ctx = f"TASK: {task['title']}\nDETAIL: {task.get('detail','')}\nACCEPTANCE: {task.get('acceptance','')}\n\nBUILDER REPORT: {report}\n\nTOOL OUTPUTS:\n" + "\n".join(outputs)[-5000:]
-        opt_c = self.llm.json(P.OPTIMIST, ctx, 0.4)
-        pes_c = self.llm.json(P.PESSIMIST, ctx, 0.4)
-        opt, pes = await asyncio.gather(opt_c, pes_c, return_exceptions=True)
-        opt = opt if isinstance(opt, dict) else {"score": 5, "strengths": [], "verdict": "pass"}
-        await self.set_state("reviewing", "Reviewing (pessimist)", anim="review_neg")
-        await asyncio.sleep(0.4)
-        pes = pes if isinstance(pes, dict) else {"score": 5, "problems": [], "verdict": "pass"}
-        await self.set_state("reviewing", "Judging…", anim="judge")
-        judge = await self.llm.json(P.JUDGE, f"{ctx}\n\nOPTIMIST: {json.dumps(opt)}\n\nPESSIMIST: {json.dumps(pes)}", 0.2)
+    async def _review(self, task: dict, report: str, outputs: list[str], light: bool = False) -> dict:
         joined = "\n".join(outputs)
-        if not report.upper().startswith("FAILED") and "NEX_OK" not in joined and len(outputs) > 0 and judge.get("verdict") == "pass" and task.get("kind") != "review":
-            judge = {"verdict": "redo", "reason": "No NEX_OK confirmation found in tool output — build was not verified.", "fix_instructions": "Re-run the build ending with print('NEX_OK ...') and then a read-only verification call that prints the created object names.", "note_for_memory": judge.get("note_for_memory", "")}
+        # --- deterministic gates first (0 GPU seconds) ---
+        if report.upper().startswith("FAILED"):
+            return {"verdict": "redo", "reason": "builder reported failure", "fix_instructions": report, "note_for_memory": ""}
+        if "NEX_ERROR" in joined[-3000:] and task.get("kind") != "review":
+            return {"verdict": "redo", "reason": "last tool output contains NEX_ERROR", "fix_instructions": "Fix the Lua error shown in the last output and re-run, then verify.", "note_for_memory": ""}
+        if "NEX_OK" not in joined and outputs and task.get("kind") != "review":
+            return {"verdict": "redo", "reason": "no NEX_OK confirmation in tool output — build not verified",
+                    "fix_instructions": "Re-run the build ending with print('NEX_OK ...') then run a read-only verification that prints the created object names.", "note_for_memory": ""}
+        if "NEX_VERIFY" not in joined and task.get("kind") not in ("review",) and not light:
+            return {"verdict": "redo", "reason": "no read-only verification call was made",
+                    "fix_instructions": "Run one read-only verification call (it will be tagged NEX_VERIFY) that prints the objects you created, then report DONE.", "note_for_memory": ""}
+        ctx = f"TASK: {task['title']}\nDETAIL: {task.get('detail','')[:900]}\nACCEPTANCE: {task.get('acceptance','')}\n\nBUILDER REPORT: {report[:800]}\n\nTOOL OUTPUTS (tail):\n" + joined[-3500:]
+        if light:
+            # one merged critic instead of three calls for small/one-shot tasks
+            await self.set_state("reviewing", "Quick review", anim="judge")
+            j = await self.llm.json(P.JUDGE + "\nYou are reviewing alone (no other critics). Be strict about evidence.", ctx, 0.1, schema=SCH.JUDGE, num_predict=300, effort="fast")
+            await self.emit("review", {"task": task["title"], "optimist": None, "pessimist": None, "judge": j})
+            return j
+        await self.set_state("reviewing", "Reviewing (optimist + pessimist)", anim="review_pos")
+        opt_c = self.llm.json(P.OPTIMIST, ctx, 0.3, schema=SCH.OPTIMIST, num_predict=350, effort="fast")
+        pes_c = self.llm.json(P.PESSIMIST, ctx, 0.3, schema=SCH.PESSIMIST, num_predict=450, effort="fast")
+        opt, pes = await asyncio.gather(opt_c, pes_c, return_exceptions=True)
+        opt = opt if isinstance(opt, dict) else {"score": 5, "strengths": [], "evidence": [], "verdict": "pass"}
+        pes = pes if isinstance(pes, dict) else {"score": 5, "problems": [], "must_fix": [], "unverified_claims": [], "verdict": "pass"}
+        await self.set_state("reviewing", "Reviewing (pessimist)", anim="review_neg")
+        # fast agreement: both pass and pessimist has no must_fix -> skip judge call
+        if opt.get("verdict") == "pass" and pes.get("verdict") == "pass" and not pes.get("must_fix"):
+            judge = {"verdict": "pass", "reason": "both reviewers agree", "fix_instructions": "", "note_for_memory": ""}
+        else:
+            await self.set_state("reviewing", "Judging…", anim="judge")
+            judge = await self.llm.json(P.JUDGE, f"{ctx[-2500:]}\n\nOPTIMIST: {json.dumps(opt)[:800]}\n\nPESSIMIST: {json.dumps(pes)[:1200]}", 0.1, schema=SCH.JUDGE, num_predict=350, effort="fast")
         await self.emit("review", {"task": task["title"], "optimist": opt, "pessimist": pes, "judge": judge})
         if judge.get("note_for_memory"):
             self.mem.add_note(judge["note_for_memory"])
@@ -453,7 +541,7 @@ class Nex:
                 if self._stop:
                     break
                 self.plan.log(f"{task['id']} builder: {report[:200]}")
-                judge = await self._review(task, report, outputs)
+                judge = await self._review(task, report, outputs, light=task.get("kind") in ("asset", "polish", "animation") and attempts == 0)
                 if judge.get("verdict") == "pass" and not report.upper().startswith("FAILED"):
                     self.plan.set_task(task["id"], status="done", fix="")
                     self._ledger_add(f"{task['title']}: {report.replace('DONE:', '').strip()[:120]}")
@@ -534,7 +622,7 @@ class Nex:
                     continue
                 self._last_activity = time.time()
                 await self.set_state("thinking", "Hmm…", anim="idea_think")
-                idea = await self.llm.json(P.IDEA_SCOUT, f"PROJECT: {json.dumps(self.mem.state['project'])}\nPLAN LOG: {json.dumps(self.plan.plan.get('log', [])[-8:])}\nNOTES: {self.mem.state['notes'][-10:]}", 0.7)
+                idea = await self.llm.json(P.IDEA_SCOUT, f"PROJECT: {json.dumps(self.mem.state['project'])}\nPLAN LOG: {json.dumps(self.plan.plan.get('log', [])[-8:])}\nNOTES: {self.mem.state['notes'][-10:]}", 0.7, schema=SCH.IDEA, num_predict=300, effort="fast")
                 if idea.get("has_idea") and idea.get("message"):
                     await self.set_state("idle", "Idea!", anim="idea")
                     await self.say(idea["message"], kind="proactive")

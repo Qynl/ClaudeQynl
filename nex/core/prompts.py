@@ -17,7 +17,10 @@ TOOL_RULES = """TOOL RULES:
 - ALWAYS end a build call with print("NEX_OK <what you built>") and wrap risky parts in pcall printing "NEX_ERROR <msg>".
 - ALWAYS follow a build with a separate read-only verification call that prints concrete facts (counts, Source length, property values).
 - Never call any tool that starts Play / playtest. Ask the user to press Play instead.
-- Never write code that uses HttpService, os, io, plugin, Studio internals."""
+- Never write code that uses HttpService, os, io, plugin, Studio internals.
+- A local PRE-FLIGHT checks your Luau before it reaches Studio. If you get NEX_PREFLIGHT_REJECTED, fix exactly the listed items and call the tool again immediately.
+- Only use Roblox APIs you are certain exist. When unsure, use the simple primitive (Part, Attribute, RemoteEvent) instead of an exotic API.
+- Verification calls must be read-only prints (they get tagged NEX_VERIFY). One build call + one verify call is the ideal task."""
 
 PLANNER = """You are Nex's PLANNER — a senior studio lead. Produce a production plan for a FINISHED, polished, sellable game.
 Not a prototype: it must have onboarding, a satisfying core loop, progression, feedback (VFX/sound hooks/UI juice), persistence, and monetization hooks.

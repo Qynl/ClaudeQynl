@@ -15,6 +15,7 @@ task graph that Build mode executes one task at a time.
 from __future__ import annotations
 import json
 from typing import Awaitable, Callable
+from . import schemas as SCH
 
 DESIGNER = """You are the GAME DESIGNER on a small professional studio. Given a brief, design a COMPLETE game that a player would pay for
 on Roblox (or UE5). Return STRICT JSON:
@@ -71,23 +72,24 @@ class PrePro:
     async def run(self, brief: str, notes: str, engines: list[str]) -> dict:
         eng = "roblox" if not engines or any("roblox" in e for e in engines) else "unreal"
         await self.on_stage("design", "Designer: core loop & systems")
-        design = await self.llm.json(DESIGNER, f"BRIEF: {brief}\nENGINE: {eng}\nUSER NOTES: {notes}", 0.6)
+        design = await self.llm.json(DESIGNER, f"BRIEF: {brief}\nENGINE: {eng}\nUSER NOTES: {notes}", 0.5, schema=SCH.DESIGN, num_predict=1800, effort="deep")
         await self.on_stage("tech", "Architect: layout, remotes, data")
-        arch = await self.llm.json(ARCHITECT, f"ENGINE: {eng}\nDESIGN: {json.dumps(design)[:6000]}", 0.3)
+        arch = await self.llm.json(ARCHITECT, f"ENGINE: {eng}\nDESIGN: {json.dumps(design)[:6000]}", 0.2, schema=SCH.ARCH, num_predict=2200, effort="deep")
         await self.on_stage("art", "Art director: palette, assets, UI")
-        art = await self.llm.json(ART, f"DESIGN: {json.dumps(design)[:3500]}\nARCH: {json.dumps(arch)[:3000]}", 0.6)
+        art = await self.llm.json(ART, f"DESIGN: {json.dumps(design)[:3500]}\nARCH: {json.dumps(arch)[:3000]}", 0.5, schema=SCH.ART, num_predict=2200)
         await self.on_stage("qa", "QA lead: acceptance tests")
-        qa = await self.llm.json(QA, f"DESIGN: {json.dumps(design)[:3500]}\nARCH: {json.dumps(arch)[:3500]}", 0.3)
+        qa = await self.llm.json(QA, f"DESIGN: {json.dumps(design)[:3500]}\nARCH: {json.dumps(arch)[:3500]}", 0.2, schema=SCH.QA, num_predict=1500)
         await self.on_stage("produce", "Producer: task graph")
         docs = f"DESIGN: {json.dumps(design)[:3500]}\nARCH: {json.dumps(arch)[:4000]}\nART: {json.dumps(art)[:3000]}\nQA: {json.dumps(qa)[:2500]}"
-        plan = await self.llm.json(PRODUCER, docs, 0.35)
+        plan = await self.llm.json(PRODUCER, docs, 0.25, schema=SCH.PLAN, num_predict=6000, effort="deep")
         await self.on_stage("review", "Reviewing the plan")
-        opt = await self.llm.json(PLAN_CRITIC_OPT, f"{docs[:5000]}\nPLAN: {json.dumps(plan)[:6000]}", 0.4)
-        pes = await self.llm.json(PLAN_CRITIC_PES, f"{docs[:5000]}\nPLAN: {json.dumps(plan)[:6000]}", 0.4)
-        judge = await self.llm.json(PLAN_JUDGE, f"OPTIMIST: {json.dumps(opt)}\nPESSIMIST: {json.dumps(pes)}", 0.2)
+        import asyncio
+        opt, pes = await asyncio.gather(self.llm.json(PLAN_CRITIC_OPT, f"{docs[:4000]}\nPLAN: {json.dumps(plan)[:5000]}", 0.3, schema=SCH.PLAN_OPT, num_predict=400, effort="fast"),
+                                        self.llm.json(PLAN_CRITIC_PES, f"{docs[:4000]}\nPLAN: {json.dumps(plan)[:5000]}", 0.3, schema=SCH.PLAN_PES, num_predict=600, effort="fast"))
+        judge = await self.llm.json(PLAN_JUDGE, f"OPTIMIST: {json.dumps(opt)}\nPESSIMIST: {json.dumps(pes)}", 0.1, schema=SCH.PLAN_JUDGE, num_predict=300, effort="fast")
         if judge.get("verdict") == "revise" and judge.get("instructions"):
             await self.on_stage("revise", "Producer: revising plan")
-            plan2 = await self.llm.json(PRODUCER_REVISE, f"{docs[:6000]}\nPLAN: {json.dumps(plan)[:7000]}\nJUDGE: {judge['instructions']}", 0.3)
+            plan2 = await self.llm.json(PRODUCER_REVISE, f"{docs[:5000]}\nPLAN: {json.dumps(plan)[:6000]}\nJUDGE: {judge['instructions']}", 0.2, schema=SCH.PLAN, num_predict=6000, effort="deep")
             if plan2.get("phases"):
                 plan = plan2
         phases = plan.get("phases") or []

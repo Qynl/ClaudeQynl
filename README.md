@@ -80,6 +80,27 @@ Nothing is built. The result is a GDD you can read in 📋 → *Design*.
 * **"remember that I hate neon colours"** → long-term note.
 * ✨ button → try any of the 137 animations.
 
+## Speed & anti-hallucination (tuned for a 16 GB GPU, e.g. RX 9060 XT)
+
+| Lever | What it does |
+|---|---|
+| `keep_alive=-1`, `num_gpu=999`, warm-up at start | gpt-oss:20b (MXFP4, ≈12.5 GB) stays pinned in VRAM; first request is already hot. |
+| `num_ctx` 8192 default | Fits weights + KV cache in 16 GB. Nex budgets every prompt to fit; memory is compacted automatically. |
+| Structured outputs (JSON schema per call) | Ollama constrains decoding — malformed JSON and rambling are impossible for intent, critics, judge, planner, GDD. |
+| Reasoning effort per call | `low` for intent/critics/judge, `medium` only for the designer/architect/producer and the builder's first step. |
+| Regex fast-path | "pause", "continue", "next song", "status", … never touch the LLM. |
+| **Luau pre-flight** (`core/luau.py`) | Before code reaches Studio: block balance, unknown services/classes/materials, deprecated APIs, missing `.Parent`, empty/TODO scripts, nested `[[ ]]`, read-only violations. Rejections come back as a checklist the model fixes in one shot — saves a 20-60 s Studio round-trip each time. |
+| Scene snapshot | Each task starts with a real tree of the place (one MCP call, zero LLM) so the model doesn't guess what exists. |
+| Auto `pcall` + undo waypoint | Build code is wrapped so errors come back as `NEX_ERROR <msg>` and every task is one Ctrl+Z in Studio. |
+| Deterministic review gates | FAILED report / `NEX_ERROR` / missing `NEX_OK` / missing `NEX_VERIFY` → instant redo, no critic calls. |
+| Fast agreement | Optimist + pessimist run in parallel; if both pass with no must-fix, the judge call is skipped. Asset/polish tasks get a single merged critic. |
+| Response cache | Identical intent/critic prompts within 10 min are not recomputed. |
+
+Typical cost per plan task on a 9060 XT: 1 builder call (~15-30 s) + 1 verify call + 2 short critics (~5 s each) ≈ 40-60 s.
+A 35-task game ≈ 30-40 min of unattended building.
+
+**ROCm note:** install Ollama's ROCm build; if `ollama ps` shows less than 100 % GPU, set `HSA_OVERRIDE_GFX_VERSION=12.0.0` (RDNA 4) or lower `num_ctx`.
+
 ## Layout
 
 ```
@@ -90,7 +111,10 @@ nex/
   core/agent.py      Nex brain: intent router, planner, builder, optimist/pessimist/judge, resume, proactive
   core/memory.py     bounded memory + persistent plan
   core/music.py      Amazon Music via media keys / media session
-  core/llm.py        Ollama client
+  core/llm.py        Ollama client (GPU pinning, schemas, effort, cache)
+  core/luau.py       Luau pre-flight linter + Studio wrappers
+  core/schemas.py    JSON schemas for structured outputs
+  core/planning.py   5-subagent pre-production pipeline
   core/voice.py      optional local Whisper/Piper
   web/               eyes (canvas), 137 animations, app logic, settings page
   presets/           MCP presets (Roblox official, Unreal, custom HTTP)

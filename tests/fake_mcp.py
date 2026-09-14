@@ -11,6 +11,6 @@ for line in sys.stdin:
     elif meth=="tools/list": r={"tools":tools}
     elif meth=="tools/call":
         n=m["params"]["name"]; a=m["params"]["arguments"]
-        out=("NEX_OK part" if "NEX_OK" in str(a) else f"ok {n}: {str(a)[:60]}"); r={"content":[{"type":"text","text":out}]}
+        cmd=str(a.get("command","")); out=("NEX_VERIFY\nPart count 3" if "NEX_VERIFY" in cmd else "NEX_OK part" if "NEX_OK" in cmd else f"ok {n}: {cmd[:60]}"); r={"content":[{"type":"text","text":out}]}
     else: r={}
     sys.stdout.write(json.dumps({"jsonrpc":"2.0","id":mid,"result":r})+"\n"); sys.stdout.flush()

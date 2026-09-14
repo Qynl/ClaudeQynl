@@ -2,6 +2,16 @@ import asyncio, sys, json, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from nex.core.mcp import MCPManager
 from nex.core.safety import check_tool_call
+from nex.core import luau as LU
+
+def test_luau():
+    ok,_=LU.summarize(LU.check("local p = Instance.new('Part'); p.Parent = workspace; print('NEX_OK')")); assert ok
+    ok,msg=LU.summarize(LU.check("local h = game:GetService('HttpService'); local x = Instance.new('Sprite')")); assert not ok and "HttpService" in msg and "Sprite" in msg
+    ok,msg=LU.summarize(LU.check("if x then print(1)")); assert not ok and "unbalanced" in msg
+    ok,msg=LU.summarize(LU.check("print(workspace.Name)", read_only=True)); assert ok
+    ok,msg=LU.summarize(LU.check("Instance.new('Part').Parent = workspace", read_only=True)); assert not ok
+    w=LU.wrap_for_studio("print('NEX_OK x')","t"); assert "pcall" in w and "SetWaypoint" in w
+    print("luau preflight ok")
 
 def test_safety():
     assert check_tool_call("r","run_code",{"command":"print(1)"},False).allowed
@@ -31,7 +41,8 @@ async def test_agent_loop():
     events=[]
     async def emit(e,d): events.append((e,d))
     class FakeLLM:
-        async def chat(self, messages, tools=None, json_mode=False, temperature=None):
+        num_ctx=8192
+        async def chat(self, messages, tools=None, json_mode=False, temperature=None, **kw):
             sys_p=messages[0]["content"]
             if json_mode:
                 if "GAME DESIGNER" in sys_p: return {"content":json.dumps({"title":"T","pitch":"p","core_loop":["a"],"systems":[{"name":"Spawn"}]}),"tool_calls":[]}
@@ -42,13 +53,15 @@ async def test_agent_loop():
                 if "PLAN JUDGE" in sys_p: return {"content":json.dumps({"verdict":"approve"}),"tool_calls":[]}
                 if "plan reviewer" in sys_p: return {"content":json.dumps({"score":7}),"tool_calls":[]}
                 if "OPTIMIST" in sys_p: return {"content":json.dumps({"score":8,"verdict":"pass"}),"tool_calls":[]}
-                if "PESSIMIST" in sys_p: return {"content":json.dumps({"score":6,"verdict":"pass","problems":[]}),"tool_calls":[]}
+                if "PESSIMIST" in sys_p: return {"content":json.dumps({"score":6,"verdict":"pass","problems":[],"must_fix":[]}),"tool_calls":[]}
                 if "JUDGE" in sys_p: return {"content":json.dumps({"verdict":"pass","reason":"fine","fix_instructions":"","note_for_memory":"baseplate is 512x512"}),"tool_calls":[]}
                 return {"content":"{}","tool_calls":[]}
-            # builder
-            if messages[-1]["role"]=="tool": return {"content":"DONE: built it","tool_calls":[]}
-            return {"content":"","tool_calls":[{"function":{"name":"fake__run_code","arguments":{"command":"Instance.new('Part') print('NEX_OK part')"}}}]}
-        async def json(self, system, user, temperature=0.3):
+            # builder: 1) build 2) verify 3) DONE
+            tool_msgs=[m for m in messages if m["role"]=="tool"]
+            if len(tool_msgs)>=2: return {"content":"DONE: built it","tool_calls":[]}
+            if len(tool_msgs)==1: return {"content":"","tool_calls":[{"function":{"name":"fake__run_code","arguments":{"command":"print('Part count', #workspace:GetChildren())"}}}]}
+            return {"content":"","tool_calls":[{"function":{"name":"fake__run_code","arguments":{"command":"local p = Instance.new('Part')\np.Parent = workspace\nprint('NEX_OK part')"}}}]}
+        async def json(self, system, user, temperature=0.3, **kw):
             from nex.core.llm import parse_json_loose
             r=await self.chat([{"role":"system","content":system},{"role":"user","content":user}],json_mode=True); return parse_json_loose(r["content"])
         async def stream(self,*a,**k):
@@ -70,10 +83,11 @@ async def test_agent_loop():
     assert len(nx.ledger)==2, nx.ledger
     pr=nx.plan.progress(); assert pr["done"]==2, pr
     assert nx.plan.plan["status"]=="done"
-    assert "baseplate is 512x512" in nx.mem.state["notes"]
+    # fast-agreement path skips the judge -> the ledger carries the facts instead
+    assert any("built it" in x for x in nx.ledger), nx.ledger
     kinds=[e for e,_ in events]; assert "review" in kinds and "tool" in kinds and "plan" in kinds
     await m.close_all(); nx._idle_task.cancel()
     import shutil; shutil.rmtree(tmp)
     print("agent ok: pre-production -> planned -> build 2/2 tasks, reviewed, ledger + memory note stored")
 
-test_safety(); asyncio.run(test_mcp()); asyncio.run(test_agent_loop())
+test_luau(); test_safety(); asyncio.run(test_mcp()); asyncio.run(test_agent_loop())

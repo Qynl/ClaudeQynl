@@ -16,8 +16,11 @@
     <div class="row"><label>Ollama host</label><input type="text" id="ollama_host"></div>
     <div class="row"><label>Model</label><input type="text" id="model" list="models"><datalist id="models"></datalist>
       <small>Default gpt-oss:20b. Run <code>ollama pull gpt-oss:20b</code> once.</small></div>
-    <div class="row"><label>Context window</label><input type="number" id="num_ctx" min="4096" step="1024"><small>16384 is a good balance for a 20b model. Nex compacts its memory automatically to stay inside this.</small></div>
-    <div class="row"><label>Temperature</label><input type="number" id="temperature" min="0" max="1.5" step="0.05"></div>
+    <div class="row"><label>Context window</label><input type="number" id="num_ctx" min="4096" step="1024"><small>8192 keeps gpt-oss:20b fully on a 16 GB GPU (≈12.5 GB weights + KV). 16384 works but may spill to RAM and get 3-5× slower. Nex budgets prompts to fit.</small></div>
+    <div class="row"><label>Temperature</label><input type="number" id="temperature" min="0" max="1.5" step="0.05"><small>0.3 default. Lower = fewer hallucinations; planners use their own values.</small></div>
+    <div class="row"><label>Reasoning effort</label><select id="think"><option value="low">low (fast, default)</option><option value="medium">medium</option><option value="high">high (slow)</option></select><small>gpt-oss thinking budget for chat. Planning/builder first step always use medium.</small></div>
+    <div class="row"><label>GPU preset</label><button class="ghost" id="preset-16gb">Apply "16 GB GPU" preset</button><small>num_ctx 8192 · temp 0.3 · low effort · model pinned in VRAM. For RX 9060 XT / RTX 4060 Ti 16 GB etc.</small></div>
+    <div class="row"><label>Live stats</label><span id="llm-stats" style="color:var(--dim);font-size:12px">—</span></div>
     <div class="row"><label>Proactive ideas</label><label class="switch"><input type="checkbox" id="proactive"> Nex may speak up on its own with ideas / bugs</label></div>
     <div class="row"><label>Theme</label><select id="theme"><option>cyan</option><option>purple</option><option>green</option><option>orange</option><option>pink</option><option>white</option></select></div>
   </div>
@@ -75,7 +78,7 @@
 
 <script>
 const $ = s => document.querySelector(s);
-const FIELDS = ['ollama_host','model','num_ctx','temperature','proactive','theme','voice_enabled','wake_word','language','stt_engine','whisper_model','tts_engine','piper_voice','music_poll'];
+const FIELDS = ['ollama_host','model','num_ctx','temperature','think','proactive','theme','voice_enabled','wake_word','language','stt_engine','whisper_model','tts_engine','piper_voice','music_poll'];
 let S = {};
 async function load() {
   S = await (await fetch('/api/settings')).json();
@@ -86,7 +89,10 @@ async function load() {
 async function checkOllama() {
   const p = $('#ollama-pill'); p.textContent = 'checking…'; p.className = 'pill';
   try { const r = await (await fetch('/api/ollama')).json();
-    if (r.ok) { p.textContent = r.has_model ? 'connected · model ready' : 'connected · model missing'; p.className = 'pill ' + (r.has_model ? 'ok' : 'bad'); $('#models').innerHTML = r.models.map(m => `<option>${m}</option>`).join(''); }
+    if (r.ok) { p.textContent = r.has_model ? 'connected · model ready' : 'connected · model missing';
+      const ld = (r.loaded || [])[0]; const st = r.stats || {};
+      const gb = (b) => (b / 1e9).toFixed(1) + ' GB';
+      $('#llm-stats').textContent = (ld ? `${ld.name}: ${gb(ld.vram)} in VRAM of ${gb(ld.size)}${ld.vram < ld.size * .95 ? ' ⚠ partially offloaded to RAM — lower num_ctx' : ' ✓ fully on GPU'} · ` : 'model not loaded yet · ') + `${st.calls || 0} calls · ${st.eval_tokens || 0} tokens generated · ${st.seconds ? (st.eval_tokens / st.seconds).toFixed(1) : '–'} tok/s avg · ${st.cache_hits || 0} cache hits`; p.className = 'pill ' + (r.has_model ? 'ok' : 'bad'); $('#models').innerHTML = r.models.map(m => `<option>${m}</option>`).join(''); }
     else { p.textContent = 'offline: ' + r.error; p.className = 'pill bad'; }
   } catch (e) { p.textContent = 'offline'; p.className = 'pill bad'; }
 }
@@ -145,6 +151,8 @@ async function save() {
   checkOllama(); setTimeout(loadMcp, 1500);
 }
 $('#save').onclick = save;
+$('#preset-16gb').onclick = () => { $('#num_ctx').value = 8192; $('#temperature').value = 0.3; $('#think').value = 'low'; save(); };
+setInterval(checkOllama, 8000);
 $('#stt-info').textContent = 'Browser STT is instant and hands-free (wake word). Whisper needs: pip install faster-whisper';
 $('#tts-info').textContent = 'Browser TTS is zero-install (Edge = best voices). Piper needs: pip install piper-tts and a voice .onnx in nex/data/';
 load();

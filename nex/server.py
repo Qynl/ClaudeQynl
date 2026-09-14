@@ -31,8 +31,9 @@ PRESETS = json.loads((ROOT / "presets" / "mcp_presets.json").read_text(encoding=
 DEFAULT_SETTINGS = {
     "ollama_host": "http://127.0.0.1:11434",
     "model": "gpt-oss:20b",
-    "num_ctx": 16384,
-    "temperature": 0.5,
+    "num_ctx": 8192,
+    "temperature": 0.3,
+    "think": "low",
     "wake_word": "nex",
     "voice_enabled": True,
     "tts_engine": "auto",        # auto | browser | piper
@@ -99,6 +100,7 @@ class App:
             await self.emit("mcp_log", {"server": name, "line": line})
 
         self.mcp.on_log = mcp_log
+        asyncio.create_task(self.llm.warmup())
         asyncio.create_task(self.reload_mcp())
         asyncio.create_task(self._music_loop())
         asyncio.create_task(self._delayed_resume())
@@ -178,7 +180,8 @@ class App:
         self.settings.update(body)
         save_settings(self.settings)
         self.llm.configure(host=self.settings["ollama_host"], model=self.settings["model"],
-                           num_ctx=int(self.settings["num_ctx"]), temperature=float(self.settings["temperature"]))
+                           num_ctx=int(self.settings["num_ctx"]), temperature=float(self.settings["temperature"]), think_default=self.settings.get("think", "low"))
+        asyncio.create_task(self.llm.warmup())
         if self.nex:
             self.nex.settings = self.settings
         await self.reload_mcp()
