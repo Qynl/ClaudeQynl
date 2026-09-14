@@ -6,11 +6,13 @@ interrupt, proactive idea scouting. All side effects go through MCPManager / Ama
 from __future__ import annotations
 import asyncio
 import json
+import re
 import time
 import traceback
 from typing import Awaitable, Callable
 
 from . import prompts as P
+from . import knowledge as K
 from .llm import Ollama, parse_json_loose
 from .mcp import MCPManager
 from .memory import Memory, PlanStore
@@ -44,6 +46,31 @@ class Nex:
         self.pending_consent: dict | None = None
 
     # ------------------------------------------------------------ utilities
+    def _engine_knowledge(self) -> str:
+        names = " ".join(s["name"] for s in self.mcp.status() if s["connected"]).lower()
+        parts = []
+        if "roblox" in names or not names:
+            parts.append(K.ROBLOX)
+        if "unreal" in names:
+            parts.append(K.UNREAL)
+        return "\n\n".join(parts) + "\n" + K.LUAU_LINT_HINTS
+
+    def _budget(self, msgs: list[dict], reserve_chars: int) -> list[dict]:
+        """Keep the message list inside the context window (rough 3.5 chars/token)."""
+        limit = int(getattr(self.llm, 'num_ctx', 16384) * 3.5) - reserve_chars
+        total = sum(len(m.get("content") or "") for m in msgs)
+        out = list(msgs)
+        while total > limit and len(out) > 3:
+            # drop the oldest non-system message; shrink tool outputs first
+            for i in range(1, len(out)):
+                if out[i].get("role") == "tool" and len(out[i]["content"]) > 800:
+                    total -= len(out[i]["content"]) - 800
+                    out[i]["content"] = out[i]["content"][:800] + " …[truncated]"
+                    break
+            else:
+                total -= len(out[1].get("content") or "")
+                del out[1]
+        return out
     async def set_state(self, state: str, text: str | None = None, anim: str | None = None):
         self.state = state
         if text is not None:
@@ -124,6 +151,8 @@ class Nex:
                 await self.start_build(intent.get("game_brief") or text)
             elif kind == "small_task":
                 await self._small_task(text)
+            elif kind == "inspect":
+                await self._inspect(text)
             elif kind == "memory":
                 await self._memory_cmd(text)
             else:
@@ -197,29 +226,46 @@ class Nex:
         except Exception:
             pass
 
-    # ------------------------------------------------------------ small task
+    # ------------------------------------------------------------ small task / inspect
     async def _small_task(self, text: str):
         await self.set_state("working", "Working in Studio…", anim="work")
-        report, outputs = await self._run_builder({"title": text, "detail": text, "acceptance": "The change exists in the scene and works."})
-        await self.say(report)
+        report, outputs = await self._run_builder({"title": text, "detail": text, "acceptance": "The change exists in the scene, is verified by a read-only check, and has no errors."})
+        if report.upper().startswith("FAILED"):
+            await self.set_state("error", "Didn't work", anim="fail")
+        else:
+            await self.set_state("idle", "Done", anim="success")
+        await self.say(report.replace("DONE:", "Done.").replace("FAILED:", "That didn't work:"))
+
+    async def _inspect(self, text: str):
+        await self.set_state("working", "Reading the place…", anim="scan")
+        report, outputs = await self._run_builder({"title": f"INSPECT (read-only, do not modify anything): {text}", "detail": "Only run read-only code that prints facts. Do not create or change anything.", "acceptance": "A clear spoken summary of what was found."}, read_only=True)
+        await self.say(report.replace("DONE:", "").strip())
 
     # ------------------------------------------------------------ builder subagent
-    async def _run_builder(self, task: dict, fix_instructions: str = "") -> tuple[str, list[str]]:
+    async def _run_builder(self, task: dict, fix_instructions: str = "", read_only: bool = False) -> tuple[str, list[str]]:
         tools = self.mcp.ollama_tools()
         if not tools:
             return "FAILED: no MCP server is connected — connect Roblox Studio or Unreal in settings.", []
-        sys_prompt = f"{P.BUILDER}\n\n{P.TOOL_RULES}\n\nPROJECT CONTEXT:\n{self.mem.context_block()[:2500]}"
+        style = json.dumps(self.plan.plan.get("meta", {}).get("style") or {}) if self.plan.plan.get("meta") else ""
+        naming = json.dumps(self.plan.plan.get("meta", {}).get("naming") or {}) if self.plan.plan.get("meta") else ""
+        sys_prompt = (f"{P.BUILDER}\n\n{P.TOOL_RULES}\n\n{self._engine_knowledge()}\n\n"
+                      f"PROJECT CONTEXT:\n{self.mem.context_block()[:2200]}\nSTYLE: {style}\nNAMING: {naming}")
+        if read_only:
+            sys_prompt += "\n\nREAD-ONLY MODE: you may only inspect. Any code that creates, destroys or sets properties is forbidden."
         user = f"TASK: {task['title']}\nDETAIL: {task.get('detail','')}\nACCEPTANCE: {task.get('acceptance','')}"
         if fix_instructions:
             user += f"\n\nPREVIOUS ATTEMPT WAS REJECTED. FIX THIS:\n{fix_instructions}"
         msgs = [{"role": "system", "content": sys_prompt}, {"role": "user", "content": user}]
         outputs: list[str] = []
+        seen_calls: dict[str, int] = {}
+        errors_in_row = 0
         for rnd in range(MAX_BUILDER_ROUNDS):
             await self._pause.wait()
             if self._stop:
                 return "FAILED: stopped by user", outputs
-            await self.set_state("working", f"Building: {task['title'][:40]}", anim="think" if rnd == 0 else "work")
-            res = await self.llm.chat(msgs, tools=tools, temperature=0.3)
+            await self.set_state("working", f"{'Inspecting' if read_only else 'Building'}: {task['title'][:40]}", anim="think" if rnd == 0 else ("read" if read_only else "work"))
+            msgs = self._budget(msgs, 6000)
+            res = await self.llm.chat(msgs, tools=tools, temperature=0.25 if rnd < 3 else 0.45)
             msgs.append({"role": "assistant", "content": res["content"], "tool_calls": res["tool_calls"]})
             if not res["tool_calls"]:
                 return (res["content"] or "DONE: (no report)"), outputs
@@ -229,8 +275,19 @@ class Nex:
                 args = fn.get("arguments", {})
                 if isinstance(args, str):
                     args = parse_json_loose(args)
-                anim = "write" if any(k in json.dumps(args).lower() for k in ("source", "instance.new", "create")) else "read"
-                await self.set_state("working", f"{'Writing' if anim=='write' else 'Reading'}: {name.split('__',1)[-1]}", anim=anim)
+                sig = name + json.dumps(args, sort_keys=True)[:400]
+                seen_calls[sig] = seen_calls.get(sig, 0) + 1
+                if seen_calls[sig] > 2:
+                    msgs.append({"role": "tool", "content": "NEX_ERROR: you already ran this exact call twice. Change approach or report FAILED with the reason.", "name": name})
+                    continue
+                payload = json.dumps(args).lower()
+                if read_only and any(k in payload for k in ("instance.new", ":destroy(", ".parent =", ":clone(", "= color3", ".source =")):
+                    msgs.append({"role": "tool", "content": "NEX_ERROR: read-only mode — this call would modify the place. Only inspect.", "name": name})
+                    continue
+                is_write = any(k in payload for k in ("source", "instance.new", "create", "spawn", "set_", "destroy"))
+                anim = ("typing" if "source" in payload else "write") if is_write else ("scan" if read_only else "read")
+                short = name.split("__", 1)[-1]
+                await self.set_state("working", f"{'Writing' if is_write else 'Reading'}: {short} · {task['title'][:30]}", anim=anim)
                 await self.emit("tool", {"name": name, "args": args})
                 result = await self.mcp.call(name, args, self.playtest_consent)
                 if result.get("needs_user_consent"):
@@ -238,8 +295,14 @@ class Nex:
                     await self.say("Want me to run a playtest now? Say yes or no.", kind="consent")
                 txt = result.get("reason") if result.get("blocked") else result.get("text", "")
                 outputs.append(f"{name}: {txt[:1500]}")
-                await self.emit("tool_result", {"name": name, "text": txt[:2000], "blocked": result.get("blocked", False)})
+                had_err = ("NEX_ERROR" in txt) or bool(result.get("isError")) or bool(re.search(r"(^|\n)\S*:\d+: |attempt to |unexpected symbol|expected .* near", txt))
+                errors_in_row = errors_in_row + 1 if had_err else 0
+                if had_err:
+                    await self.set_state("working", "Hit an error, fixing…", anim="facepalm" if errors_in_row >= 2 else "fix")
+                await self.emit("tool_result", {"name": name, "text": txt[:2000], "blocked": result.get("blocked", False), "error": bool(had_err)})
                 msgs.append({"role": "tool", "content": txt[:6000], "name": name})
+                if errors_in_row >= 4:
+                    return "FAILED: repeated errors — " + txt[:200], outputs
         return "FAILED: ran out of tool rounds", outputs
 
     # ------------------------------------------------------------ review committee
@@ -255,6 +318,9 @@ class Nex:
         pes = pes if isinstance(pes, dict) else {"score": 5, "problems": [], "verdict": "pass"}
         await self.set_state("reviewing", "Judging…", anim="judge")
         judge = await self.llm.json(P.JUDGE, f"{ctx}\n\nOPTIMIST: {json.dumps(opt)}\n\nPESSIMIST: {json.dumps(pes)}", 0.2)
+        joined = "\n".join(outputs)
+        if not report.upper().startswith("FAILED") and "NEX_OK" not in joined and len(outputs) > 0 and judge.get("verdict") == "pass" and task.get("kind") != "review":
+            judge = {"verdict": "redo", "reason": "No NEX_OK confirmation found in tool output — build was not verified.", "fix_instructions": "Re-run the build ending with print('NEX_OK ...') and then a read-only verification call that prints the created object names.", "note_for_memory": judge.get("note_for_memory", "")}
         await self.emit("review", {"task": task["title"], "optimist": opt, "pessimist": pes, "judge": judge})
         if judge.get("note_for_memory"):
             self.mem.add_note(judge["note_for_memory"])
@@ -266,6 +332,7 @@ class Nex:
             await self.say("I'm already building something. Say 'stop' first if you want a new project.")
             return
         await self.set_state("thinking", "Planning the game…", anim="plan")
+        await self.emit("state", {"state": "thinking", "text": "Planning the game…", "anim": "compile"})
         await self.say("On it. Let me plan this like a real production first.", kind="proactive")
         engines = [s["name"] for s in self.mcp.status() if s["connected"]]
         plan = await self.llm.json(P.PLANNER, f"GAME BRIEF: {brief}\nCONNECTED ENGINES: {engines or ['roblox (assumed)']}\nUSER NOTES: {self.mem.context_block()[:1200]}", 0.5)
@@ -291,6 +358,18 @@ class Nex:
         self._stop = False
         self._pause.set()
         self._build_task = asyncio.create_task(self._build_loop())
+
+    async def startup_report(self):
+        st = self.mcp.status()
+        on = [x["name"] for x in st if x["connected"]]
+        off = [x for x in st if not x["connected"] and x.get("error")]
+        if on:
+            await self.set_state("idle", "Connected", anim="connected")
+            await self.say(f"Connected to {', '.join(on)}. Say Nex and tell me what to build.", kind="proactive")
+        elif off:
+            await self.set_state("idle", "No engine connected", anim="disconnected")
+            await self.say("I'm awake, but no engine is connected yet. Open Roblox Studio with a place, or check the MCP settings.", kind="proactive", speak=False)
+        await self.resume_if_needed()
 
     async def resume_if_needed(self):
         """Called at startup: continue an interrupted build exactly where it was."""
@@ -329,6 +408,7 @@ class Nex:
                     attempts += 1
                     if attempts >= MAX_TASK_ATTEMPTS:
                         self.plan.set_task(task["id"], status="skipped", attempts=attempts)
+                        await self.set_state("working", "Skipping task", anim="rain_cloud")
                         await self.say(f"I couldn't get '{task['title']}' right after {attempts} tries, moving on. Reason: {judge.get('reason','')[:120]}", kind="proactive")
                     else:
                         self.plan.set_task(task["id"], status="failed", attempts=attempts, fix=judge.get("fix_instructions", ""))
@@ -339,8 +419,15 @@ class Nex:
             if not self._stop and not self.plan.next_task():
                 self.plan.plan["status"] = "done"; self.plan.save()
                 await self.emit("plan", self.plan.plan)
+                await self.set_state("idle", "Game finished!", anim="victory_spin")
+                await asyncio.sleep(2.2)
                 await self.set_state("idle", "Game finished!", anim="celebrate")
-                await self.say("The game is finished and reviewed. Want to playtest it? Press Play in Studio and tell me how it feels.", kind="proactive")
+                try:
+                    qa = await self.llm.chat([{"role": "system", "content": P.FINAL_QA}, {"role": "user", "content": f"PLAN: {json.dumps(self.plan.plan)[:9000]}\nNOTES: {self.mem.state['notes'][-30:]}"}], temperature=0.3)
+                    await self.say(qa["content"], kind="proactive")
+                except Exception:
+                    pass
+                await self.say("Press Play in Studio and tell me how it feels — I'll fix whatever you find.", kind="proactive")
                 await asyncio.sleep(4)
         except Exception as e:
             traceback.print_exc()

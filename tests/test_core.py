@@ -41,7 +41,7 @@ async def test_agent_loop():
                 return {"content":"{}","tool_calls":[]}
             # builder
             if messages[-1]["role"]=="tool": return {"content":"DONE: built it","tool_calls":[]}
-            return {"content":"","tool_calls":[{"function":{"name":"fake__run_code","arguments":{"command":"Instance.new('Part')"}}}]}
+            return {"content":"","tool_calls":[{"function":{"name":"fake__run_code","arguments":{"command":"Instance.new('Part') print('NEX_OK part')"}}}]}
         async def json(self, system, user, temperature=0.3):
             from nex.core.llm import parse_json_loose
             r=await self.chat([{"role":"system","content":system},{"role":"user","content":user}],json_mode=True); return parse_json_loose(r["content"])

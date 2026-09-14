@@ -1,6 +1,7 @@
 /* NEX EYES RENDERER — canvas, 60fps, blends a state loop + one-shot overlays + micro-behaviour */
 (function () {
   const { A, STATE_ANIM, IDLE_FIDGETS, MUSIC_VARIANTS } = window.NexAnims;
+  const abs = Math.abs;
   const canvas = document.getElementById('eyes');
   const ctx = canvas.getContext('2d');
   let W = 0, H = 0, DPR = 1;
@@ -25,7 +26,7 @@
 
   function resize() {
     DPR = Math.min(window.devicePixelRatio || 1, 2);
-    W = canvas.clientWidth; H = canvas.clientHeight;
+    W = canvas.clientWidth || (canvas.ownerDocument.defaultView||window).innerWidth; H = canvas.clientHeight || (canvas.ownerDocument.defaultView||window).innerHeight;
     canvas.width = W * DPR; canvas.height = H * DPR;
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     const s = Math.min(W / 560, H / 420, 1.6);
@@ -257,6 +258,16 @@
   P.stars_orbit = (t, w, cx, cy, hue) => { const s = state.scale; ctx.save(); ctx.font = `${30 * s}px sans-serif`; ctx.textAlign = 'center'; for (let i = 0; i < 4; i++) { const a = t * 4 + i * Math.PI / 2; ctx.fillText('⭐', cx + Math.cos(a) * (EYE.gap / 2 + EYE.w * .8), cy - EYE.h / 2 - 40 * s + Math.sin(a) * 18 * s); } ctx.restore(); };
   P.vol_up = (t, w, cx, cy, hue) => { const s = state.scale; ctx.save(); ctx.font = `${60 * s}px sans-serif`; ctx.textAlign = 'center'; ctx.fillText('🔊', cx, cy - EYE.h / 2 - 70 * s - t * 20 * s); ctx.restore(); };
   P.vol_down = (t, w, cx, cy, hue) => { const s = state.scale; ctx.save(); ctx.font = `${60 * s}px sans-serif`; ctx.textAlign = 'center'; ctx.fillText('🔉', cx, cy - EYE.h / 2 - 70 * s + t * 20 * s); ctx.restore(); };
+
+
+  // --- props for the new batch ---
+  P.keyboard = (t, w, cx, cy, hue) => { const s = state.scale; const y = cy + EYE.h / 2 + 46 * s; ctx.save(); ctx.fillStyle = '#161c28'; rr(cx - 150 * s, y, 300 * s, 54 * s, 10 * s); ctx.fill(); for (let r = 0; r < 3; r++) for (let i = 0; i < 12; i++) { const k = (i * 7 + r * 13 + Math.floor(t * 14)) % 9 === 0; ctx.fillStyle = k ? `hsl(${hue} 90% 65%)` : '#2a3344'; if (k) { ctx.shadowColor = `hsl(${hue} 90% 60%)`; ctx.shadowBlur = 10 * s; } else ctx.shadowBlur = 0; rr(cx - 140 * s + i * 24 * s + r * 6 * s, y + 6 * s + r * 15 * s, 18 * s, 11 * s, 3 * s); ctx.fill(); } ctx.restore(); };
+  P.progress = (t, w, cx, cy, hue) => { const s = state.scale; const p = typeof t === 'number' ? t : 0; const y = cy + EYE.h / 2 + 50 * s, W2 = 260 * s; ctx.save(); ctx.fillStyle = 'rgba(255,255,255,.08)'; rr(cx - W2 / 2, y, W2, 12 * s, 6 * s); ctx.fill(); ctx.fillStyle = `hsl(${hue} 90% 60%)`; ctx.shadowColor = `hsl(${hue} 90% 60%)`; ctx.shadowBlur = 14 * s; rr(cx - W2 / 2, y, W2 * Math.max(.02, p), 12 * s, 6 * s); ctx.fill(); ctx.shadowBlur = 0; ctx.fillStyle = 'rgba(255,255,255,.6)'; ctx.font = `${11 * s}px ui-monospace,monospace`; ctx.textAlign = 'center'; ctx.fillText(Math.round(p * 100) + '%', cx, y + 30 * s); ctx.restore(); };
+  P.laser = (t, w, cx, cy, hue) => { const s = state.scale; const p = typeof t === 'number' ? t : 0; const y = cy - EYE.h / 2 - 20 * s + p * (EYE.h + 40 * s); const span = EYE.gap / 2 + EYE.w + 30 * s; ctx.save(); ctx.strokeStyle = `hsl(${(hue + 20) % 360} 100% 65%)`; ctx.shadowColor = ctx.strokeStyle; ctx.shadowBlur = 24 * s; ctx.lineWidth = 3 * s; ctx.beginPath(); ctx.moveTo(cx - span, y); ctx.lineTo(cx + span, y); ctx.stroke(); ctx.globalAlpha = .25; ctx.lineWidth = 18 * s; ctx.stroke(); ctx.restore(); };
+  P.hand_cover = (t, w, cx, cy, hue) => { const s = state.scale; const p = typeof t === 'number' ? t : 1; ctx.save(); ctx.globalAlpha = p; ctx.translate(cx - EYE.gap / 2 - EYE.w / 2, cy - EYE.h / 2 + 20 * s - (1 - p) * 80 * s); ctx.rotate(.25); ctx.font = `${120 * s}px sans-serif`; ctx.textAlign = 'center'; ctx.fillText('🤚', 0, 40 * s); ctx.restore(); };
+  P.cloud = (t, w, cx, cy, hue) => { const s = state.scale; const y = cy - EYE.h / 2 - 110 * s; ctx.save(); ctx.fillStyle = '#6b7a90'; for (const [dx, r] of [[-40, 28], [-10, 38], [30, 30], [55, 22]]) { ctx.beginPath(); ctx.arc(cx + dx * s + Math.sin(t) * 6 * s, y, r * s, 0, 7); ctx.fill(); } ctx.strokeStyle = '#7dd3fc'; ctx.lineWidth = 3 * s; ctx.lineCap = 'round'; for (let i = 0; i < 9; i++) { const p = ((t * 1.3 + i * .11) % 1); ctx.globalAlpha = 1 - p; const x = cx + (-50 + i * 13) * s + Math.sin(t) * 6 * s; ctx.beginPath(); ctx.moveTo(x, y + 30 * s + p * 150 * s); ctx.lineTo(x - 3 * s, y + 44 * s + p * 150 * s); ctx.stroke(); } ctx.restore(); };
+  P.hand_headset = (t, w, cx, cy, hue) => { const s = state.scale; const span = EYE.gap / 2 + EYE.w + 40 * s; ctx.save(); ctx.translate(cx - span - 30 * s, cy + 10 * s + Math.sin(t * 6) * 3 * s); ctx.rotate(-.5); ctx.font = `${90 * s}px sans-serif`; ctx.textAlign = 'center'; ctx.fillText('🤚', 0, 30 * s); ctx.restore(); };
+  P.equalizer = (t, w, cx, cy, hue) => { const s = state.scale; const y = cy + EYE.h / 2 + 60 * s; ctx.save(); for (let i = 0; i < 16; i++) { const h = (6 + abs(Math.sin(t * 7 + i * 1.3) * Math.sin(t * 3 + i)) * 40) * s; ctx.fillStyle = `hsl(${(hue + i * 12) % 360} 90% 60%)`; rr(cx - 120 * s + i * 15 * s, y - h, 10 * s, h, 3 * s); ctx.fill(); } ctx.restore(); };
 
   // ---------- main loop ----------
   let last = now();

@@ -154,10 +154,33 @@ A.sneeze = (t) => { const p = t < .8 ? seg(t, 0, .8) : 0; const s = t >= .8 && t
 A.electric = (t) => ({ duration: 1, bodyX: (Math.random() - .5) * 8, glow: 2 + Math.random(), hue: 60, props: ['sparks'], propAnim: t, shape: 'wide' });
 A.bow = (t) => { const p = sin(seg(t, 0, 1.5) * Math.PI); return { duration: 1.5, bodyY: p * 30, ly: p * 10, ry: p * 10, lidT: p * .5, shape: 'happy' }; };
 
+
+// ---------- NEW BATCH (10) ----------
+// 1. typing — rapid-fire code writing: eyes scan lines, body ticks like a caret, keyboard clacks
+A.typing = (t) => { const line = Math.floor(t * 1.4) % 4; return { loop: true, ly: 6 + line * 3, ry: 6 + line * 3, lx: ((t * 90) % 46) - 23, rx: ((t * 90) % 46) - 23, squint: .3, bodyY: abs(sin(t * 28)) * -1.5, props: ['keyboard'], propAnim: t, shape: 'focus', glow: 1.15 }; };
+// 2. compile — bar loads, eyes squint harder as it builds, tiny shake at the end
+A.compile = (t) => { const p = (t % 3) / 3; return { loop: true, squint: .2 + p * .4, lx: sin(t * 3) * 3, rx: sin(t * 3) * 3, bodyX: p > .92 ? sin(t * 90) * 3 : 0, props: ['progress'], propAnim: p, glow: 1 + p * .6 }; };
+// 3. scan — a laser line sweeps over the eyes while they track it (inspect / read-only mode)
+A.scan = (t) => { const p = (t % 2.4) / 2.4; const y = -1 + p * 2; return { loop: true, ly: y * 18, ry: y * 18, lidT: .1, props: ['laser'], propAnim: p, glow: 1.2 + (1 - abs(y)) * .5, hue: 20 }; };
+// 4. facepalm — eyes drop, lid slams, slow shake (silly bug found)
+A.facepalm = (t) => { const p = ease(seg(t, 0, .4)); return { duration: 2.4, lidT: .85 * p, ly: 14 * p, ry: 14 * p, bodyY: 10 * p, bodyR: sin(t * 3) * .05 * p, props: ['hand_cover'], propAnim: p, glow: .7 }; };
+// 5. victory_spin — 360° spin with squash & stretch, then a proud pose
+A.victory_spin = (t) => { const p = ease(seg(t, .1, .9)); const st = sin(p * Math.PI); return { duration: 2.2, bodyR: p * TAU, bodyY: -st * 50, lw: 1 - st * .2, rw: 1 - st * .2, lh: 1 + st * .3, rh: 1 + st * .3, shape: t > .9 ? 'happy' : 'rect', props: t > 1 ? ['sparks'] : [], propAnim: t, glow: 1.6, hue: p * 120 }; };
+// 6. heartbeat — double-pump glow like a pulse (waiting for the user / deep sleep light)
+A.heartbeat = (t) => { const b = t % 1.1; const k = b < .12 ? sin(b / .12 * Math.PI) : b < .35 && b > .2 ? sin((b - .2) / .15 * Math.PI) * .6 : 0; return { loop: true, lw: 1 + k * .08, rw: 1 + k * .08, lh: 1 + k * .08, rh: 1 + k * .08, glow: .8 + k * 1.2, lidT: .25 }; };
+// 7. side_eye — eyes slide to one side, one lid drops halfway (suspicious of pessimist / weird input)
+A.side_eye = (t) => { const p = ease(seg(t, 0, .35)) * (1 - ease(seg(t, 1.6, 2.1))); return { duration: 2.1, lx: 24 * p, rx: 24 * p, lLidT: .45 * p, rLidT: .2 * p, bodyR: -.04 * p }; };
+// 8. rain_cloud — a small cloud rains on Nex while it sulks (task skipped after 3 attempts)
+A.rain_cloud = (t) => ({ duration: 3.5, shape: 'sad', bodyY: 10, ly: 4, ry: 4, lidT: .3, props: ['cloud'], propAnim: t, hue: -70, glow: .6 });
+// 9. wake_stretch — full morning routine: lids open, eyes stretch tall, shake off, blink
+A.wake_stretch = (t) => { const a = ease(seg(t, 0, .8)), b = sin(seg(t, .8, 2) * Math.PI), c = seg(t, 2, 2.5); return { duration: 2.8, lidT: (1 - a) * .95 + (c > 0 && c < 1 ? sin(c * Math.PI) : 0), lh: 1 + b * .45, rh: 1 + b * .45, lw: 1 - b * .18, rw: 1 - b * .18, bodyY: 10 * (1 - a) - b * 12, bodyR: t > 2.5 ? sin(t * 40) * .03 * (1 - seg(t, 2.5, 2.8)) : 0, glow: .3 + a * 1.1 }; };
+// 10. beat_drop_dj — DJ mode: one hand on headset, head tilt, scratch wobble on the beat
+A.music_dj = (t, c) => { const b = c.beat || (t % .5) / .5; return { loop: true, bodyR: -.18 + sin(t * TAU * .95) * .06, bodyX: -12, bodyY: -abs(sin(t * TAU * 1.9)) * 6, lLidT: .35, rLidT: .1, lx: sin(t * TAU * 3.8) * 4 * (b < .3 ? 1 : 0), rx: sin(t * TAU * 3.8) * 4 * (b < .3 ? 1 : 0), shape: 'focus', props: ['headset', 'hand_headset', 'notes', 'equalizer'], propAnim: t, glow: 1.4 + (1 - b) * .5 }; };
+
 // state -> default loop
 const STATE_ANIM = { idle: 'idle', thinking: 'think', working: 'work', reviewing: 'judge', speaking: 'speak', listening: 'listen', music: 'music_vibe', error: 'error', sleep: 'sleep', offline: 'offline' };
 // idle variety pool (random one-shots while idle)
-const IDLE_FIDGETS = ['blink', 'blink', 'blink', 'double_blink', 'look_left', 'look_right', 'look_up', 'tilt_left', 'tilt_right', 'slow_blink', 'hmm', 'stretch', 'idle_look_around', 'roll_eyes', 'yawn', 'wink', 'peek', 'whistle'];
-const MUSIC_VARIANTS = ['music_vibe', 'music_headbang', 'music_sway', 'music_bounce', 'music_eyes_closed', 'music_shuffle', 'music_love'];
+const IDLE_FIDGETS = ['blink', 'blink', 'blink', 'double_blink', 'look_left', 'look_right', 'look_up', 'tilt_left', 'tilt_right', 'slow_blink', 'hmm', 'stretch', 'idle_look_around', 'roll_eyes', 'yawn', 'wink', 'peek', 'whistle', 'side_eye', 'heartbeat'];
+const MUSIC_VARIANTS = ['music_vibe', 'music_headbang', 'music_sway', 'music_bounce', 'music_eyes_closed', 'music_shuffle', 'music_love', 'music_dj'];
 
 window.NexAnims = { A, STATE_ANIM, IDLE_FIDGETS, MUSIC_VARIANTS, count: Object.keys(A).length };

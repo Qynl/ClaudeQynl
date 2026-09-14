@@ -11,7 +11,7 @@
   function connect() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     ws = new WebSocket(`${proto}://${location.host}/ws`);
-    ws.onopen = () => { wsReady = true; reconnectT = 1000; Eyes.play('wake'); };
+    ws.onopen = () => { wsReady = true; reconnectT = 1000; Eyes.play('wake_stretch'); };
     ws.onclose = () => { wsReady = false; setStatus('offline', 'Nex server offline', 'offline'); setTimeout(connect, reconnectT); reconnectT = Math.min(8000, reconnectT * 1.6); };
     ws.onmessage = (e) => { const { event, data } = JSON.parse(e.data); handle(event, data); };
   }
@@ -63,8 +63,8 @@
       case 'stream': if (streamEl) { streamEl.textContent += d.delta; log.scrollTop = log.scrollHeight; } break;
       case 'stream_end': break;
       case 'tool': { const n = d.name.split('__').pop(); addMsg('assistant', `⚙ ${n}${d.args?.command ? ': ' + String(d.args.command).slice(0, 80).replace(/\n/g, ' ') + '…' : ''}`, 'tool'); Eyes.play('tool_call'); break; }
-      case 'tool_result': addMsg('assistant', (d.blocked ? '🛡 blocked: ' : '↩ ') + (d.text || '').slice(0, 160).replace(/\n/g, ' '), 'tool' + (d.blocked ? ' blocked' : '')); Eyes.play(d.blocked ? 'shield_block' : 'tool_result'); break;
-      case 'review': { const v = d.judge?.verdict; Eyes.play(v === 'pass' ? 'approve' : 'disapprove'); addMsg('assistant', `⚖ ${d.task}: optimist ${d.optimist?.score ?? '?'}/10 · pessimist ${d.pessimist?.score ?? '?'}/10 → ${v}`, 'tool'); break; }
+      case 'tool_result': addMsg('assistant', (d.blocked ? '🛡 blocked: ' : d.error ? '⚠ ' : '↩ ') + (d.text || '').slice(0, 160).replace(/\n/g, ' '), 'tool' + (d.blocked ? ' blocked' : d.error ? ' err' : '')); Eyes.play(d.blocked ? 'shield_block' : d.error ? 'side_eye' : 'tool_result'); break;
+      case 'review': { const v = d.judge?.verdict; Eyes.play(v === 'pass' ? 'approve' : (d.pessimist?.score <= 3 ? 'facepalm' : 'disapprove')); addMsg('assistant', `⚖ ${d.task}: optimist ${d.optimist?.score ?? '?'}/10 · pessimist ${d.pessimist?.score ?? '?'}/10 → ${v}`, 'tool'); break; }
       case 'plan': renderPlan(d); break;
       case 'music': onMusic(d); break;
       case 'settings': settings = d; Eyes.setTheme(settings.theme); break;
@@ -107,7 +107,7 @@
     const body = $('#plan-body'); body.innerHTML = '';
     p.phases.forEach(ph => {
       const h = document.createElement('div'); h.className = 'phase'; h.textContent = ph.name; body.appendChild(h);
-      (ph.tasks || []).forEach(t => { total++; if (t.status === 'done') done++; const d = document.createElement('div'); d.className = `task ${t.status || 'todo'}`; d.innerHTML = `<i>${t.status === 'done' ? '✓' : t.status === 'skipped' ? '!' : ''}</i><span>${t.title}</span>`; body.appendChild(d); });
+      (ph.tasks || []).forEach(t => { total++; if (t.status === 'done') done++; const d = document.createElement('div'); d.className = `task ${t.status || 'todo'}`; d.title = (t.detail || '') + (t.acceptance ? '\n\nCheck: ' + t.acceptance : ''); d.innerHTML = `<i>${t.status === 'done' ? '✓' : t.status === 'skipped' ? '!' : ''}</i><span>${t.title}${t.attempts ? ` <em>(try ${t.attempts + 1})</em>` : ''}</span>`; body.appendChild(d); });
     });
     const pct = total ? Math.round(done / total * 100) : 0;
     $('#plan-pct').textContent = `${done}/${total} · ${p.status}`;
@@ -121,6 +121,18 @@
   const picker = $('#anim-picker');
   Eyes.list().forEach(n => { const b = document.createElement('button'); b.textContent = n; b.onclick = () => { const def = window.NexAnims.A[n](0, {}); if (def.loop) { Eyes.setState('idle', n); setTimeout(() => Eyes.setState('idle', 'idle'), 6000); } else Eyes.play(n); }; picker.appendChild(b); });
   $('#btn-anims').onclick = () => picker.classList.toggle('hidden');
+  $('#btn-pip').onclick = async () => {
+    // Document Picture-in-Picture (Chrome/Edge 116+): a tiny always-on-top window with just the eyes + status.
+    if (!('documentPictureInPicture' in window)) return toast('Always-on-top needs Chrome/Edge 116+');
+    const pip = await documentPictureInPicture.requestWindow({ width: 420, height: 300 });
+    [...document.styleSheets].forEach(ss => { try { const st = document.createElement('style'); st.textContent = [...ss.cssRules].map(r => r.cssText).join(''); pip.document.head.appendChild(st); } catch (e) { } });
+    pip.document.body.style.background = '#07090f';
+    const c = document.getElementById('eyes'), st = document.getElementById('status'), th = document.getElementById('thought');
+    pip.document.body.append(c, st, th);
+    pip.addEventListener('pagehide', () => { document.body.prepend(th); document.body.prepend(st); document.body.prepend(c); window.dispatchEvent(new Event('resize')); });
+    pip.addEventListener('resize', () => window.dispatchEvent(new Event('resize')));
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
+  };
 
   // ---------- TTS ----------
   let speaking = false;
@@ -195,6 +207,7 @@
   }
   function startRec() { try { rec.start(); recOn = true; mic.classList.add('on'); toast(`Listening for “${settings.wake_word || 'Nex'}”`); } catch (e) { } }
   function wakeUp() {
+    if ('speechSynthesis' in window) speechSynthesis.cancel(); queue.length = 0; // barge-in: stop talking when user says the wake word
     awake = true; mic.classList.add('wake'); Eyes.play('wake_word');
     setStatus('listening', 'Listening…', 'listen');
     clearTimeout(awakeTimer); awakeTimer = setTimeout(() => { awake = false; mic.classList.remove('wake'); if (statusEl.className === 'listening') setStatus('idle', 'Ready', 'idle'); }, 9000);
@@ -225,7 +238,12 @@
   // ---------- misc ----------
   let toastT;
   function toast(t) { const el = $('#toast'); el.textContent = t; el.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove('show'), 2200); }
-  window.addEventListener('keydown', (e) => { if (e.key === '/' && document.activeElement !== input) { e.preventDefault(); input.focus(); } });
+  window.addEventListener('keydown', (e) => {
+    if (e.key === '/' && document.activeElement !== input) { e.preventDefault(); input.focus(); }
+    if (e.key === 'Escape') { if ('speechSynthesis' in window) speechSynthesis.cancel(); queue.length = 0; input.blur(); }
+    if (e.key === 'm' && document.activeElement !== input) { mic.click(); }
+    if (e.key === ' ' && document.activeElement !== input && rec && wantRec && !awake) { e.preventDefault(); wakeUp(); }
+  });
   if ('speechSynthesis' in window) speechSynthesis.getVoices();
   connect();
 })();

@@ -9,7 +9,7 @@ through MCP — running fully local on `gpt-oss:20b` via Ollama.
 │                                                              │
 │            ▄▄▄▄▄▄▄▄▄▄          ▄▄▄▄▄▄▄▄▄▄                    │
 │            █████████           █████████                     │
-│            █████████           █████████         ← 119 anims │
+│            █████████           █████████         ← 129 anims │
 │            █████████           █████████                     │
 │            ▀▀▀▀▀▀▀▀▀▀          ▀▀▀▀▀▀▀▀▀▀                    │
 │                                                              │
@@ -30,6 +30,8 @@ through MCP — running fully local on `gpt-oss:20b` via Ollama.
 | Amazon Music | Windows media keys + system media session. **No API, no login.** Play / pause / next / previous / volume / "what's playing" / search. |
 | Build whole games | Planner → per-task Builder subagent → **Optimist** + **Pessimist** reviewers → **Judge** → redo or next task. Runs until done or you say stop. |
 | Remember | Bounded memory: rolling conversation summary + ≤60 long-term notes + persistent plan. Interrupt or restart – Nex continues from the exact task. |
+| Inspect | "Nex, what's in the place?" / "what does GameManager do?" → read-only mode (mutating code is refused). |
+| Always-on-top | 🗗 button pops the eyes into a tiny Picture-in-Picture window that floats over Studio. |
 | Speak up on its own | Progress every few tasks, "reviewers rejected X, fixing…", found/fixed bugs, and idle-time ideas about your project. |
 
 ### What Nex **cannot** do (by construction, not by prompt)
@@ -62,7 +64,7 @@ then switch engines in **⚙ Settings**.
   and tells you when it hits milestones. Open 📋 to watch the plan.
 * **"pause"**, **"continue"**, **"stop"**, **"status"** control the build.
 * **"remember that I hate neon colours"** → long-term note.
-* ✨ button → try any of the 119 animations.
+* ✨ button → try any of the 129 animations.
 
 ## Layout
 
@@ -76,7 +78,7 @@ nex/
   core/music.py      Amazon Music via media keys / media session
   core/llm.py        Ollama client
   core/voice.py      optional local Whisper/Piper
-  web/               eyes (canvas), 119 animations, app logic, settings page
+  web/               eyes (canvas), 129 animations, app logic, settings page
   presets/           MCP presets (Roblox official, Unreal, custom HTTP)
   data/              Nex's memory (git-ignored)
 tests/test_core.py   safety + MCP + full agent-loop tests (mock LLM)

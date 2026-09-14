@@ -104,9 +104,9 @@ class App:
         asyncio.create_task(self._delayed_resume())
 
     async def _delayed_resume(self):
-        await asyncio.sleep(3)
+        await asyncio.sleep(4)
         if self.nex:
-            await self.nex.resume_if_needed()
+            await self.nex.startup_report()
 
     async def reload_mcp(self):
         cfgs = {k: expand(v) for k, v in self.settings.get("mcp", {}).items()}
